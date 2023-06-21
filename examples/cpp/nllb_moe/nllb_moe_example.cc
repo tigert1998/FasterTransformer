@@ -66,6 +66,7 @@ void NllbMoeExample(const INIReader& reader)
     std::vector<int> input_ids;
     int              max_input_ids_length;
     ReadInputIds(&input_ids_lengths, &input_ids, &max_input_ids_length, pad_token_id);
+    int batch_size = input_ids.size() / max_input_ids_length;
 
     int* d_input_ids_lengths;
     int* d_input_ids;
@@ -75,6 +76,20 @@ void NllbMoeExample(const INIReader& reader)
     fastertransformer::cudaH2Dcpy(d_input_ids_lengths, input_ids_lengths.data(), input_ids_lengths.size());
 
     fastertransformer::NllbMoeWeight<T> nllb_moe_weight(model_dir);
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+    fastertransformer::NllbMoe<T> nllb_moe(model_config_reader, stream);
+
+    std::unordered_map<std::string, fastertransformer::Tensor> input_tensors = {
+        {"input_ids",
+         {fastertransformer::MEMORY_GPU,
+          fastertransformer::TYPE_INT32,
+          std::vector<size_t>{batch_size, max_input_ids_length},
+          d_input_ids}},
+    };
+    std::unordered_map<std::string, fastertransformer::Tensor> output_tensors = {};
+    nllb_moe.forward(&output_tensors, &input_tensors, &nllb_moe_weight);
 }
 
 int main(int argc, char** argv)

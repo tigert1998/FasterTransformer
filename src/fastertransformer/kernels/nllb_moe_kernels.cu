@@ -1,0 +1,139 @@
+#ifndef CUDART_VERSION
+#error CUDART_VERSION Undefined!
+#elif (CUDART_VERSION >= 11050)
+#include <cub/cub.cuh>
+#else
+#include "3rdparty/cub/cub.cuh"
+#endif
+
+#include "src/fastertransformer/kernels/nllb_moe_kernels.h"
+#include "src/fastertransformer/utils/memory_utils.h"
+
+#include <thrust/device_vector.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/transform.h>
+
+namespace fastertransformer {
+
+namespace {
+__global__ void PrefixSum(const int* input, int* output, uint64_t n, uint64_t m)
+{
+    auto tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n)
+        return;
+    // to be optimized
+    output[tid * m] = input[tid * m];
+    for (int i = 1; i < m; i++) {
+        output[tid * m + i] = output[tid * m + i - 1] + input[tid * m + i];
+    }
+}
+
+template<typename T>
+__global__ void EmbeddingLookup(const int* input_ids,
+                                const T*   embedding,
+                                T*         output,
+                                uint64_t   batch_size,
+                                uint64_t   max_input_ids_length,
+                                uint64_t   d_model)
+{
+    auto tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= batch_size * max_input_ids_length * d_model)
+        return;
+    int input_id = input_ids[tid / d_model];
+    output[tid]  = embedding[input_id * d_model + (tid % d_model)];
+}
+}  // namespace
+
+template<typename T>
+void NllbMoeEmbeddingLookup(const int*   input_ids,
+                            int          pad_token_id,
+                            const T*     embedding,
+                            const T*     positional_embedding,
+                            T*           output,
+                            uint64_t     batch_size,
+                            uint64_t     max_input_ids_length,
+                            uint64_t     d_model,
+                            bool         scale_embedding,
+                            cudaStream_t stream)
+{
+    thrust::device_vector<int> mask(batch_size * max_input_ids_length);
+    thrust::device_vector<int> prefix_sum(batch_size * max_input_ids_length);
+    thrust::device_vector<int> position_ids(batch_size * max_input_ids_length);
+    thrust::device_vector<T>   embed_pos(batch_size * max_input_ids_length * d_model);
+    thrust::device_vector<T>   inputs_embeds(batch_size * max_input_ids_length * d_model);
+
+    thrust::transform(thrust::cuda::par.on(stream),
+                      input_ids,
+                      input_ids + mask.size(),
+                      mask.begin(),
+                      [pad_token_id] __device__(int input_id) { return (int)(input_id != pad_token_id); });
+    PrefixSum<<<(batch_size + 7) / 8, 8, 0, stream>>>(thrust::raw_pointer_cast(mask.data()),
+                                                      thrust::raw_pointer_cast(prefix_sum.data()),
+                                                      batch_size,
+                                                      max_input_ids_length);
+    thrust::transform(
+        thrust::cuda::par.on(stream),
+        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum.begin(), mask.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum.end(), mask.end())),
+        position_ids.begin(),
+        [pad_token_id] __device__(auto x) { return thrust::get<0>(x) * thrust::get<1>(x) + pad_token_id; });
+
+    EmbeddingLookup<T>
+        <<<batch_size * max_input_ids_length, d_model, 0, stream>>>(thrust::raw_pointer_cast(position_ids.data()),
+                                                                    positional_embedding,
+                                                                    thrust::raw_pointer_cast(embed_pos.data()),
+                                                                    batch_size,
+                                                                    max_input_ids_length,
+                                                                    d_model);
+    EmbeddingLookup<T>
+        <<<batch_size * max_input_ids_length, d_model, 0, stream>>>(input_ids,
+                                                                    embedding,
+                                                                    thrust::raw_pointer_cast(inputs_embeds.data()),
+                                                                    batch_size,
+                                                                    max_input_ids_length,
+                                                                    d_model);
+
+    T embed_scale = scale_embedding ? std::sqrt(d_model) : 1;
+    thrust::transform(thrust::cuda::par.on(stream),
+                      thrust::make_zip_iterator(thrust::make_tuple(inputs_embeds.begin(), embed_pos.begin())),
+                      thrust::make_zip_iterator(thrust::make_tuple(inputs_embeds.end(), embed_pos.end())),
+                      output,
+                      [embed_scale] __device__(auto x) { return thrust::get<0>(x) * embed_scale + thrust::get<1>(x); });
+}
+
+template void NllbMoeEmbeddingLookup(const int*   input_ids,
+                                     int          pad_token_id,
+                                     const float* embedding,
+                                     const float* positional_embedding,
+                                     float*       output,
+                                     uint64_t     batch_size,
+                                     uint64_t     max_input_ids_length,
+                                     uint64_t     d_model,
+                                     bool         scale_embedding,
+                                     cudaStream_t stream);
+
+template void NllbMoeEmbeddingLookup(const int*   input_ids,
+                                     int          pad_token_id,
+                                     const half*  embedding,
+                                     const half*  positional_embedding,
+                                     half*        output,
+                                     uint64_t     batch_size,
+                                     uint64_t     max_input_ids_length,
+                                     uint64_t     d_model,
+                                     bool         scale_embedding,
+                                     cudaStream_t stream);
+
+#ifdef ENABLE_BF16
+template void NllbMoeEmbeddingLookup(const int*           input_ids,
+                                     int                  pad_token_id,
+                                     const __nv_bfloat16* embedding,
+                                     const __nv_bfloat16* positional_embedding,
+                                     __nv_bfloat16*       output,
+                                     uint64_t             batch_size,
+                                     uint64_t             max_input_ids_length,
+                                     uint64_t             d_model,
+                                     bool                 scale_embedding,
+                                     cudaStream_t         stream);
+#endif
+
+}  // namespace fastertransformer
