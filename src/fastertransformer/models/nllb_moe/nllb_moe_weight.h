@@ -1,8 +1,8 @@
 #pragma once
 
-#include "src/fastertransformer/models/nllb_moe/nllb_moe_sinusoidal_positional_embedding_weight.h"
-
 #include <string>
+
+#include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder_weight.h"
 
 #include <memory>
 #include <stdint.h>
@@ -19,9 +19,8 @@ public:
 
     NllbMoeWeight<T> operator=(const NllbMoeWeight<T>&) = delete;
 
-    T* shared = nullptr;                  // embedding table
-    std::unique_ptr<NllbMoeSinusoidalPositionalEmbeddingWeight<T>>
-        sinusoidal_positional_embedding;  // positional embedding
+    T*                                       shared  = nullptr;  // embedding table
+    std::unique_ptr<NllbMoeEncoderWeight<T>> encoder = nullptr;  // encoder
 
 private:
     uint64_t d_model_, vocab_size_;

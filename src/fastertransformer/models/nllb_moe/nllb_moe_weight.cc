@@ -16,7 +16,7 @@ NllbMoeWeight<T>::NllbMoeWeight(const std::string& dir_path)
 
     LoadModel(dir_path);
 
-    sinusoidal_positional_embedding = std::make_unique<NllbMoeSinusoidalPositionalEmbeddingWeight<T>>(reader);
+    encoder = std::make_unique<NllbMoeEncoderWeight<T>>(dir_path, shared);
 }
 
 template<typename T>

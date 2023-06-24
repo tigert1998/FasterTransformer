@@ -9,35 +9,30 @@
 namespace fastertransformer {
 
 template<typename T>
-NllbMoe<T>::NllbMoe(const INIReader& reader, cudaStream_t stream)
+NllbMoe<T>::NllbMoe(const INIReader& reader, cudaStream_t stream, IAllocator* allocator)
 {
-    stream_ = stream;
+    stream_    = stream;
+    allocator_ = allocator;
 
-    d_model_      = reader.GetInteger("nllb_moe", "d_model");
-    pad_token_id_ = reader.GetInteger("nllb_moe", "pad_token_id");
+    encoder_ = std::make_unique<NllbMoeEncoder<T>>(reader, stream, allocator);
 }
 
 template<typename T>
-void NllbMoe<T>::forward(std::unordered_map<std::string, Tensor>*       output_tensors,
+void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_tensors,
                          const std::unordered_map<std::string, Tensor>* input_tensors,
                          const NllbMoeWeight<T>*                        nllb_moe_weight)
 {
-    uint64_t batch_size           = input_tensors->at("input_ids").shape[0];
-    uint64_t max_input_ids_length = input_tensors->at("input_ids").shape[1];
-    int*     input_ids            = input_tensors->at("input_ids").getPtr<int>();
+    {
+        std::unordered_map<std::string, Tensor> output_tensors_for_encoder = {};
+        std::unordered_map<std::string, Tensor> input_tensors_for_encoder  = {
+            {"input_ids", input_tensors->at("input_ids")}};
+        encoder_->Forward(&output_tensors_for_encoder, &input_tensors_for_encoder, nllb_moe_weight->encoder.get());
+    }
+}
 
-    T* hidden_states;
-    deviceMalloc(&hidden_states, batch_size * max_input_ids_length * d_model_, false);
-    NllbMoeEmbeddingLookup(input_ids,
-                           pad_token_id_,
-                           nllb_moe_weight->shared,
-                           nllb_moe_weight->sinusoidal_positional_embedding->weight,
-                           hidden_states,
-                           batch_size,
-                           max_input_ids_length,
-                           d_model_,
-                           true,
-                           stream_);
+template<typename T>
+void NllbMoe<T>::AllocateBuffer(uint64_t batch_size, uint64_t max_input_ids_length, uint64_t d_model)
+{
 }
 
 template struct NllbMoe<float>;

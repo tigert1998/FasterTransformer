@@ -4,8 +4,11 @@
 #include "3rdparty/INIReader.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_weight.h"
+#include "src/fastertransformer/utils/allocator.h"
 #include "src/fastertransformer/utils/cuda_utils.h"
 #include "src/fastertransformer/utils/memory_utils.h"
+
+namespace ft = fastertransformer;
 
 int ReadInputIds(std::vector<int>* input_ids_lengths,
                  std::vector<int>* input_ids,
@@ -17,7 +20,7 @@ int ReadInputIds(std::vector<int>* input_ids_lengths,
 
     std::string   file_name = "./examples/cpp/nllb_moe/input_ids.txt";
     std::ifstream input_ids_file(file_name, std::ios::in);
-    fastertransformer::FT_CHECK(input_ids_file.is_open());
+    ft::FT_CHECK(input_ids_file.is_open());
     {
         std::string line;
         while (std::getline(input_ids_file, line)) {
@@ -59,7 +62,7 @@ void NllbMoeExample(const INIReader& reader)
 {
     std::string model_dir           = reader.Get("ft_instance_hyperparameter", "model_dir");
     INIReader   model_config_reader = INIReader(model_dir + "/config.ini");
-    fastertransformer::FT_CHECK(model_config_reader.ParseError() == 0);
+    ft::FT_CHECK(model_config_reader.ParseError() == 0);
     int pad_token_id = std::stoi(model_config_reader.Get("nllb_moe", "pad_token_id"));
 
     std::vector<int> input_ids_lengths;
@@ -70,26 +73,25 @@ void NllbMoeExample(const INIReader& reader)
 
     int* d_input_ids_lengths;
     int* d_input_ids;
-    fastertransformer::deviceMalloc(&d_input_ids, input_ids.size(), false);
-    fastertransformer::deviceMalloc(&d_input_ids_lengths, input_ids_lengths.size(), false);
-    fastertransformer::cudaH2Dcpy(d_input_ids, input_ids.data(), input_ids.size());
-    fastertransformer::cudaH2Dcpy(d_input_ids_lengths, input_ids_lengths.data(), input_ids_lengths.size());
+    ft::deviceMalloc(&d_input_ids, input_ids.size(), false);
+    ft::deviceMalloc(&d_input_ids_lengths, input_ids_lengths.size(), false);
+    ft::cudaH2Dcpy(d_input_ids, input_ids.data(), input_ids.size());
+    ft::cudaH2Dcpy(d_input_ids_lengths, input_ids_lengths.data(), input_ids_lengths.size());
 
-    fastertransformer::NllbMoeWeight<T> nllb_moe_weight(model_dir);
+    ft::NllbMoeWeight<T> nllb_moe_weight(model_dir);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
-    fastertransformer::NllbMoe<T> nllb_moe(model_config_reader, stream);
+    ft::Allocator<ft::AllocatorType::CUDA> allocator(ft::getDevice());
 
-    std::unordered_map<std::string, fastertransformer::Tensor> input_tensors = {
+    ft::NllbMoe<T> nllb_moe(model_config_reader, stream, &allocator);
+
+    std::unordered_map<std::string, ft::Tensor> input_tensors = {
         {"input_ids",
-         {fastertransformer::MEMORY_GPU,
-          fastertransformer::TYPE_INT32,
-          std::vector<size_t>{batch_size, max_input_ids_length},
-          d_input_ids}},
+         {ft::MEMORY_GPU, ft::TYPE_INT32, std::vector<size_t>{batch_size, max_input_ids_length}, d_input_ids}},
     };
-    std::unordered_map<std::string, fastertransformer::Tensor> output_tensors = {};
-    nllb_moe.forward(&output_tensors, &input_tensors, &nllb_moe_weight);
+    std::unordered_map<std::string, ft::Tensor> output_tensors = {};
+    nllb_moe.Forward(&output_tensors, &input_tensors, &nllb_moe_weight);
 }
 
 int main(int argc, char** argv)
@@ -103,7 +105,7 @@ int main(int argc, char** argv)
     }
 
     INIReader reader = INIReader(ini_path);
-    fastertransformer::FT_CHECK(reader.ParseError() == 0);
+    ft::FT_CHECK(reader.ParseError() == 0);
 
     const std::string data_type = reader.Get("ft_instance_hyperparameter", "data_type");
 

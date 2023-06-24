@@ -54,49 +54,59 @@ void NllbMoeEmbeddingLookup(const int*   input_ids,
                             uint64_t     max_input_ids_length,
                             uint64_t     d_model,
                             bool         scale_embedding,
+                            uint64_t*    temp_storage_size,
+                            void*        temp_storage,
                             cudaStream_t stream)
 {
-    thrust::device_vector<int> mask(batch_size * max_input_ids_length);
-    thrust::device_vector<int> prefix_sum(batch_size * max_input_ids_length);
-    thrust::device_vector<int> position_ids(batch_size * max_input_ids_length);
-    thrust::device_vector<T>   embed_pos(batch_size * max_input_ids_length * d_model);
-    thrust::device_vector<T>   inputs_embeds(batch_size * max_input_ids_length * d_model);
+    int *mask_begin, *mask_end;
+    int *prefix_sum_begin, *prefix_sum_end;
+    int *position_ids_begin, *position_ids_end;
+    T *  embed_pos_begin, *embed_pos_end;
+    T *  inputs_embeds_begin, *inputs_embeds_end;
+
+    if (temp_storage == nullptr) {
+        *temp_storage_size = batch_size * max_input_ids_length * 3 * sizeof(int)
+                             + batch_size * max_input_ids_length * d_model * 2 * sizeof(T);
+        return;
+    }
+    else {
+        char* temp_storage_ptr = (char*)temp_storage;
+        mask_begin             = (int*)temp_storage_ptr;
+        temp_storage_ptr += batch_size * max_input_ids_length * sizeof(int);
+        mask_end = prefix_sum_begin = (int*)temp_storage_ptr;
+        temp_storage_ptr += batch_size * max_input_ids_length * sizeof(int);
+        prefix_sum_end = position_ids_begin = (int*)temp_storage_ptr;
+        temp_storage_ptr += batch_size * max_input_ids_length * sizeof(int);
+        position_ids_end = (int*)temp_storage_ptr;
+        embed_pos_begin  = (T*)temp_storage_ptr;
+        temp_storage_ptr += batch_size * max_input_ids_length * d_model * sizeof(T);
+        embed_pos_end = inputs_embeds_begin = (T*)temp_storage_ptr;
+        temp_storage_ptr += batch_size * max_input_ids_length * d_model * sizeof(T);
+        inputs_embeds_end = (T*)temp_storage_ptr;
+    }
 
     thrust::transform(thrust::cuda::par.on(stream),
                       input_ids,
-                      input_ids + mask.size(),
-                      mask.begin(),
+                      input_ids + batch_size * max_input_ids_length,
+                      mask_begin,
                       [pad_token_id] __device__(int input_id) { return (int)(input_id != pad_token_id); });
-    PrefixSum<<<(batch_size + 7) / 8, 8, 0, stream>>>(thrust::raw_pointer_cast(mask.data()),
-                                                      thrust::raw_pointer_cast(prefix_sum.data()),
-                                                      batch_size,
-                                                      max_input_ids_length);
+    PrefixSum<<<(batch_size + 7) / 8, 8, 0, stream>>>(mask_begin, prefix_sum_begin, batch_size, max_input_ids_length);
     thrust::transform(
         thrust::cuda::par.on(stream),
-        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum.begin(), mask.begin())),
-        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum.end(), mask.end())),
-        position_ids.begin(),
+        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum_begin, mask_begin)),
+        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum_end, mask_end)),
+        position_ids_begin,
         [pad_token_id] __device__(auto x) { return thrust::get<0>(x) * thrust::get<1>(x) + pad_token_id; });
 
-    EmbeddingLookup<T>
-        <<<batch_size * max_input_ids_length, d_model, 0, stream>>>(thrust::raw_pointer_cast(position_ids.data()),
-                                                                    positional_embedding,
-                                                                    thrust::raw_pointer_cast(embed_pos.data()),
-                                                                    batch_size,
-                                                                    max_input_ids_length,
-                                                                    d_model);
-    EmbeddingLookup<T>
-        <<<batch_size * max_input_ids_length, d_model, 0, stream>>>(input_ids,
-                                                                    embedding,
-                                                                    thrust::raw_pointer_cast(inputs_embeds.data()),
-                                                                    batch_size,
-                                                                    max_input_ids_length,
-                                                                    d_model);
+    EmbeddingLookup<T><<<batch_size * max_input_ids_length, d_model, 0, stream>>>(
+        position_ids_begin, positional_embedding, embed_pos_begin, batch_size, max_input_ids_length, d_model);
+    EmbeddingLookup<T><<<batch_size * max_input_ids_length, d_model, 0, stream>>>(
+        input_ids, embedding, inputs_embeds_begin, batch_size, max_input_ids_length, d_model);
 
     T embed_scale = scale_embedding ? std::sqrt(d_model) : 1;
     thrust::transform(thrust::cuda::par.on(stream),
-                      thrust::make_zip_iterator(thrust::make_tuple(inputs_embeds.begin(), embed_pos.begin())),
-                      thrust::make_zip_iterator(thrust::make_tuple(inputs_embeds.end(), embed_pos.end())),
+                      thrust::make_zip_iterator(thrust::make_tuple(inputs_embeds_begin, embed_pos_begin)),
+                      thrust::make_zip_iterator(thrust::make_tuple(inputs_embeds_end, embed_pos_end)),
                       output,
                       [embed_scale] __device__(auto x) { return thrust::get<0>(x) * embed_scale + thrust::get<1>(x); });
 }
@@ -110,6 +120,8 @@ template void NllbMoeEmbeddingLookup(const int*   input_ids,
                                      uint64_t     max_input_ids_length,
                                      uint64_t     d_model,
                                      bool         scale_embedding,
+                                     uint64_t*    temp_storage_size,
+                                     void*        temp_storage,
                                      cudaStream_t stream);
 
 template void NllbMoeEmbeddingLookup(const int*   input_ids,
@@ -121,6 +133,8 @@ template void NllbMoeEmbeddingLookup(const int*   input_ids,
                                      uint64_t     max_input_ids_length,
                                      uint64_t     d_model,
                                      bool         scale_embedding,
+                                     uint64_t*    temp_storage_size,
+                                     void*        temp_storage,
                                      cudaStream_t stream);
 
 #ifdef ENABLE_BF16
@@ -133,6 +147,8 @@ template void NllbMoeEmbeddingLookup(const int*           input_ids,
                                      uint64_t             max_input_ids_length,
                                      uint64_t             d_model,
                                      bool                 scale_embedding,
+                                     uint64_t*            temp_storage_size,
+                                     void*                temp_storage,
                                      cudaStream_t         stream);
 #endif
 
