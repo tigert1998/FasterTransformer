@@ -9,7 +9,7 @@ namespace fastertransformer {
 
 namespace xiaohu_dbg {
 template<typename T>
-void PrintGPUArray(T* arr, int num_elements)
+void PrintGPUArray(const T* arr, int num_elements)
 {
     std::vector<T> vec(num_elements);
     cudaD2Hcpy(vec.data(), arr, num_elements);

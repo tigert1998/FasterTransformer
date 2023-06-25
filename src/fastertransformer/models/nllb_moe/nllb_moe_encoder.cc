@@ -1,5 +1,6 @@
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder.h"
 
+#include "src/fastertransformer/kernels/layernorm_kernels.h"
 #include "src/fastertransformer/kernels/nllb_moe_kernels.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_utils.h"
 
@@ -8,8 +9,10 @@ namespace fastertransformer {
 template<typename T>
 NllbMoeEncoder<T>::NllbMoeEncoder(const INIReader& reader, cudaStream_t stream, IAllocator* allocator)
 {
-    pad_token_id_ = reader.GetInteger("nllb_moe", "pad_token_id");
-    d_model_      = reader.GetInteger("nllb_moe", "d_model");
+    pad_token_id_        = reader.GetInteger("nllb_moe", "pad_token_id");
+    d_model_             = reader.GetInteger("nllb_moe", "d_model");
+    encoder_sparse_step_ = reader.GetInteger("nllb_moe", "encoder_sparse_step");
+    encoder_layers_      = reader.GetInteger("nllb_moe", "encoder_layers");
 
     stream_    = stream;
     allocator_ = allocator;
@@ -58,7 +61,21 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                               embedding_lookup_temp_storage_,
                               stream_);
 
-    xiaohu_dbg::PrintGPUArray<T>(hidden_states_, batch_size * max_input_ids_length * d_model_);
+    for (int i = 0; i < encoder_layers_; i++) {
+        invokeGeneralLayerNorm<T>(self_attn_input_,
+                                  hidden_states_,
+                                  nllb_moe_encoder_weight->layers[i]->self_attn_layer_norm.gamma,
+                                  nllb_moe_encoder_weight->layers[i]->self_attn_layer_norm.beta,
+                                  1e-5,
+                                  batch_size * max_input_ids_length,
+                                  d_model_,
+                                  nullptr,
+                                  0,
+                                  stream_);
+        break;
+    }
+    cudaStreamSynchronize(stream_);
+    xiaohu_dbg::PrintGPUArray(self_attn_input_, batch_size * max_input_ids_length * d_model_);
 }
 
 template<typename T>
@@ -66,17 +83,20 @@ void NllbMoeEncoder<T>::AllocateBuffer(uint64_t batch_size,
                                        uint64_t max_input_ids_length,
                                        uint64_t embedding_lookup_temp_storage_size)
 {
-    hidden_states_ =
-        (T*)allocator_->reMalloc(hidden_states_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
     embedding_lookup_temp_storage_ =
         (void*)allocator_->reMalloc(embedding_lookup_temp_storage_, embedding_lookup_temp_storage_size, false);
+    hidden_states_ =
+        (T*)allocator_->reMalloc(hidden_states_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    self_attn_input_ =
+        (T*)allocator_->reMalloc(self_attn_input_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
 }
 
 template<typename T>
 void NllbMoeEncoder<T>::FreeBuffer()
 {
-    allocator_->free((void**)(&hidden_states_));
     allocator_->free((void**)(&embedding_lookup_temp_storage_));
+    allocator_->free((void**)(&hidden_states_));
+    allocator_->free((void**)(&self_attn_input_));
 }
 
 template class NllbMoeEncoder<float>;
