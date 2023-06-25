@@ -9,12 +9,16 @@
 namespace fastertransformer {
 
 template<typename T>
-NllbMoe<T>::NllbMoe(const INIReader& reader, cudaStream_t stream, IAllocator* allocator)
+NllbMoe<T>::NllbMoe(const INIReader& reader,
+                    cudaStream_t     stream,
+                    cublasMMWrapper* cublas_wrapper,
+                    IAllocator*      allocator)
 {
-    stream_    = stream;
-    allocator_ = allocator;
+    stream_         = stream;
+    cublas_wrapper_ = cublas_wrapper;
+    allocator_      = allocator;
 
-    encoder_ = std::make_unique<NllbMoeEncoder<T>>(reader, stream, allocator);
+    encoder_ = std::make_unique<NllbMoeEncoder<T>>(reader, stream, cublas_wrapper, allocator);
 }
 
 template<typename T>
@@ -25,7 +29,9 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
     {
         std::unordered_map<std::string, Tensor> output_tensors_for_encoder = {};
         std::unordered_map<std::string, Tensor> input_tensors_for_encoder  = {
-            {"input_ids", input_tensors->at("input_ids")}};
+            {"input_ids", input_tensors->at("input_ids")},
+            {"input_ids_lengths", input_tensors->at("input_ids_lengths")},
+        };
         encoder_->Forward(&output_tensors_for_encoder, &input_tensors_for_encoder, nllb_moe_weight->encoder.get());
     }
 }

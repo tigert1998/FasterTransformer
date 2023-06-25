@@ -1,4 +1,5 @@
 #include <iostream>
+#include <mutex>
 #include <vector>
 
 #include "3rdparty/INIReader.h"
@@ -84,11 +85,33 @@ void NllbMoeExample(const INIReader& reader)
     cudaStreamCreate(&stream);
     ft::Allocator<ft::AllocatorType::CUDA> allocator(ft::getDevice());
 
-    ft::NllbMoe<T> nllb_moe(model_config_reader, stream, &allocator);
+    cublasHandle_t   cublas_handle;
+    cublasLtHandle_t cublaslt_handle;
+    cublasCreate(&cublas_handle);
+    cublasLtCreate(&cublaslt_handle);
+    cublasSetStream(cublas_handle, stream);
+    ft::cublasAlgoMap*  cublas_algo_map      = new ft::cublasAlgoMap(GEMM_CONFIG);
+    std::mutex*         cublas_wrapper_mutex = new std::mutex();
+    ft::cublasMMWrapper cublas_wrapper =
+        ft::cublasMMWrapper(cublas_handle, cublaslt_handle, stream, cublas_algo_map, cublas_wrapper_mutex, &allocator);
+    if (std::is_same<T, half>::value) {
+        cublas_wrapper.setGemmConfig(CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F);
+    }
+#ifdef ENABLE_BF16
+    else if (std::is_same<T, __nv_bfloat16>::value) {
+        cublas_wrapper.setBF16GemmConfig();
+    }
+#endif
+    else if (std::is_same<T, float>::value) {
+        cublas_wrapper.setFP32GemmConfig();
+    }
+
+    ft::NllbMoe<T> nllb_moe(model_config_reader, stream, &cublas_wrapper, &allocator);
 
     std::unordered_map<std::string, ft::Tensor> input_tensors = {
         {"input_ids",
          {ft::MEMORY_GPU, ft::TYPE_INT32, std::vector<size_t>{batch_size, max_input_ids_length}, d_input_ids}},
+        {"input_ids_lengths", {ft::MEMORY_GPU, ft::TYPE_INT32, std::vector<size_t>{batch_size}, d_input_ids_lengths}},
     };
     std::unordered_map<std::string, ft::Tensor> output_tensors = {};
     nllb_moe.Forward(&output_tensors, &input_tensors, &nllb_moe_weight);

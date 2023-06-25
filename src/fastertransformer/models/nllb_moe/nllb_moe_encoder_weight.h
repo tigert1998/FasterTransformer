@@ -1,6 +1,7 @@
 #pragma once
 
 #include "src/fastertransformer/kernels/layernorm_kernels.h"
+#include "src/fastertransformer/layers/attention_layers/AttentionWeight.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_sinusoidal_positional_embedding_weight.h"
 
 #include <memory>
@@ -18,6 +19,7 @@ public:
     NllbMoeEncoderLayerWeight<T> operator=(const NllbMoeEncoderLayerWeight<T>&) = delete;
 
     LayerNormWeight<T> self_attn_layer_norm;
+    AttentionWeight<T> self_attn;
 
 private:
     uint64_t d_model_;

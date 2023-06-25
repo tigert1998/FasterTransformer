@@ -1,11 +1,13 @@
 #pragma once
 
+#include "src/fastertransformer/layers/attention_layers/UnfusedAttentionLayer.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder_weight.h"
 #include "src/fastertransformer/utils/Tensor.h"
 #include "src/fastertransformer/utils/allocator.h"
 
 #include "3rdparty/INIReader.h"
 
+#include <memory>
 #include <stdint.h>
 #include <string>
 #include <unordered_map>
@@ -16,7 +18,10 @@ template<typename T>
 class NllbMoeEncoder {
 public:
     inline NllbMoeEncoder() = default;
-    NllbMoeEncoder(const INIReader& reader, cudaStream_t stream, IAllocator* allocator);
+    NllbMoeEncoder(const INIReader& reader,
+                   cudaStream_t     stream,
+                   cublasMMWrapper* cublas_wrapper,
+                   IAllocator*      allocator);
     ~NllbMoeEncoder();
 
     void Forward(std::unordered_map<std::string, Tensor>*       output_tensors,
@@ -24,14 +29,19 @@ public:
                  const NllbMoeEncoderWeight<T>*                 nllb_moe_encoder_weight);
 
 private:
-    cudaStream_t stream_;
-    IAllocator*  allocator_;
+    cudaStream_t     stream_;
+    cublasMMWrapper* cublas_wrapper_;
+    IAllocator*      allocator_;
 
     uint64_t d_model_, pad_token_id_, encoder_sparse_step_, encoder_layers_;
 
     void* embedding_lookup_temp_storage_ = nullptr;
     T*    hidden_states_                 = nullptr;
     T*    self_attn_input_               = nullptr;
+    T*    attention_mask_                = nullptr;
+    T*    self_attn_output_              = nullptr;
+
+    std::unique_ptr<UnfusedAttentionLayer<T>> self_attn_;
 
     void
     AllocateBuffer(uint64_t batch_size, uint64_t max_input_ids_length, uint64_t embedding_lookup_temp_storage_size);

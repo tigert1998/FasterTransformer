@@ -4,7 +4,20 @@ import configparser
 
 import numpy as np
 import torch
+import torch.nn as nn
 from transformers import NllbMoeForConditionalGeneration
+
+
+def fetch_module_by_name(module: nn.Module, name: str):
+    if name == "":
+        return module
+    for name in name.split('.'):
+        try:
+            idx = int(name)
+            module = module[idx]
+        except:
+            module = getattr(module, name)
+    return module
 
 
 def get_weight_data_type(data_type):
@@ -80,7 +93,11 @@ def convert(saved_dir, in_file, weight_data_type):
 
     np_weight_data_type = get_weight_data_type(args.weight_data_type)
     for name, param in model.named_parameters():
-        param.detach().cpu().numpy().astype(np_weight_data_type).tofile(os.path.join(saved_dir, name))
+        np_param: np.array = param.detach().cpu().numpy().astype(np_weight_data_type)
+        is_linear = isinstance(fetch_module_by_name(model, os.path.splitext(name)[0]), nn.Linear)
+        if is_linear:
+            np_param = np_param.T
+        np_param.tofile(os.path.join(saved_dir, name))
 
 
 if __name__ == "__main__":

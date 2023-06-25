@@ -20,6 +20,14 @@ NllbMoeEncoderLayerWeight<T>::~NllbMoeEncoderLayerWeight()
 {
     deviceFree((T*&)self_attn_layer_norm.gamma);
     deviceFree((T*&)self_attn_layer_norm.beta);
+    deviceFree((T*&)self_attn.query_weight.kernel);
+    deviceFree((T*&)self_attn.query_weight.bias);
+    deviceFree((T*&)self_attn.key_weight.kernel);
+    deviceFree((T*&)self_attn.key_weight.bias);
+    deviceFree((T*&)self_attn.value_weight.kernel);
+    deviceFree((T*&)self_attn.value_weight.bias);
+    deviceFree((T*&)self_attn.attention_output_weight.kernel);
+    deviceFree((T*&)self_attn.attention_output_weight.bias);
 }
 
 template<typename T>
@@ -27,21 +35,50 @@ void NllbMoeEncoderLayerWeight<T>::MallocWeights()
 {
     deviceMalloc((T**)&self_attn_layer_norm.gamma, d_model_, false);
     deviceMalloc((T**)&self_attn_layer_norm.beta, d_model_, false);
+    deviceMalloc((T**)&self_attn.query_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&self_attn.query_weight.bias, d_model_, false);
+    deviceMalloc((T**)&self_attn.key_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&self_attn.key_weight.bias, d_model_, false);
+    deviceMalloc((T**)&self_attn.value_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&self_attn.value_weight.bias, d_model_, false);
+    deviceMalloc((T**)&self_attn.attention_output_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&self_attn.attention_output_weight.bias, d_model_, false);
 }
 
 template<typename T>
 void NllbMoeEncoderLayerWeight<T>::LoadModel(const std::string& dir_path, uint64_t layer_index)
 {
-    FtCudaDataType model_file_type = getModelFileType(dir_path + "/config.ini", "nllb_moe");
-    loadWeightFromBin<T>((T*)self_attn_layer_norm.gamma,
-                         {d_model_},
-                         dir_path + "/model.encoder.layers." + std::to_string(layer_index)
-                             + ".self_attn_layer_norm.weight",
+    FtCudaDataType model_file_type  = getModelFileType(dir_path + "/config.ini", "nllb_moe");
+    std::string    file_path_prefix = dir_path + "/model.encoder.layers." + std::to_string(layer_index);
+    loadWeightFromBin<T>(
+        (T*)self_attn_layer_norm.gamma, {d_model_}, file_path_prefix + ".self_attn_layer_norm.weight", model_file_type);
+    loadWeightFromBin<T>(
+        (T*)self_attn_layer_norm.beta, {d_model_}, file_path_prefix + ".self_attn_layer_norm.bias", model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.query_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".self_attn.q_proj.weight",
                          model_file_type);
-    loadWeightFromBin<T>((T*)self_attn_layer_norm.beta,
+    loadWeightFromBin<T>(
+        (T*)self_attn.query_weight.bias, {d_model_}, file_path_prefix + ".self_attn.q_proj.bias", model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.key_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".self_attn.k_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>(
+        (T*)self_attn.key_weight.bias, {d_model_}, file_path_prefix + ".self_attn.k_proj.bias", model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.value_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".self_attn.v_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>(
+        (T*)self_attn.value_weight.bias, {d_model_}, file_path_prefix + ".self_attn.v_proj.bias", model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.attention_output_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".self_attn.out_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.attention_output_weight.bias,
                          {d_model_},
-                         dir_path + "/model.encoder.layers." + std::to_string(layer_index)
-                             + ".self_attn_layer_norm.bias",
+                         file_path_prefix + ".self_attn.out_proj.bias",
                          model_file_type);
 }
 

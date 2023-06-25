@@ -15,15 +15,16 @@ namespace fastertransformer {
 template<typename T>
 class NllbMoe {
 public:
-    NllbMoe(const INIReader& reader, cudaStream_t stream, IAllocator* allocator);
+    NllbMoe(const INIReader& reader, cudaStream_t stream, cublasMMWrapper* cublas_wrapper, IAllocator* allocator);
 
     void Forward(std::unordered_map<std::string, Tensor>*       output_tensors,
                  const std::unordered_map<std::string, Tensor>* input_tensors,
                  const NllbMoeWeight<T>*                        nllb_moe_weight);
 
 private:
-    cudaStream_t stream_;
-    IAllocator*  allocator_;
+    cudaStream_t     stream_;
+    cublasMMWrapper* cublas_wrapper_;
+    IAllocator*      allocator_;
 
     std::unique_ptr<NllbMoeEncoder<T>> encoder_;
 
