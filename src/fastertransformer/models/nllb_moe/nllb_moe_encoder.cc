@@ -133,22 +133,23 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
         self_attn_->forward(
             &self_attn_output_tensors, &self_attn_input_tensors, &nllb_moe_encoder_weight->layers[i]->self_attn);
 
-        invokeGeneralAddBiasResidualPreLayerNorm<T>(residual_,
-                                                    ffn_input_,
-                                                    self_attn_output_,
-                                                    hidden_states_,
-                                                    nllb_moe_encoder_weight->layers[i]->ff_layer_norm.gamma,
-                                                    nllb_moe_encoder_weight->layers[i]->ff_layer_norm.beta,
-                                                    nullptr,
-                                                    1e-5,
-                                                    batch_size * max_input_ids_length,
-                                                    d_model_,
-                                                    nullptr,
-                                                    nullptr,
-                                                    nullptr,
-                                                    nullptr,
-                                                    0,
-                                                    stream_);
+        invokeGeneralAddBiasResidualPreLayerNorm<T>(
+            residual_,
+            ffn_input_,
+            self_attn_output_,
+            hidden_states_,
+            nllb_moe_encoder_weight->layers[i]->ff_layer_norm.gamma,
+            nllb_moe_encoder_weight->layers[i]->ff_layer_norm.beta,
+            nllb_moe_encoder_weight->layers[i]->self_attn.attention_output_weight.bias,
+            1e-5,
+            batch_size * max_input_ids_length,
+            d_model_,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            0,
+            stream_);
 
         if (nllb_moe_encoder_weight->layers[i]->is_sparse()) {
             uint64_t  moe_k             = 2;
@@ -200,7 +201,7 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                                      ffn_output_,
                                      residual_,
                                      nullptr,
-                                     nullptr,
+                                     nllb_moe_encoder_weight->layers[i]->ffn.output_weight.bias,
                                      nullptr,
                                      nullptr,
                                      batch_size * max_input_ids_length,
