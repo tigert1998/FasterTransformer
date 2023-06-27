@@ -9,7 +9,12 @@ template<typename T>
 NllbMoeEncoderLayerWeight<T>::NllbMoeEncoderLayerWeight(const std::string& dir_path, uint64_t layer_index)
 {
     INIReader reader(dir_path + "/config.ini");
-    d_model_ = reader.GetInteger("nllb_moe", "d_model");
+    d_model_                     = reader.GetInteger("nllb_moe", "d_model");
+    uint64_t encoder_sparse_step = reader.GetInteger("nllb_moe", "encoder_sparse_step");
+    is_sparse_                   = encoder_sparse_step > 0 ? (layer_index + 1) % encoder_sparse_step == 0 : false;
+    num_experts_                 = reader.GetInteger("nllb_moe", "num_experts");
+    encoder_ffn_dim_             = reader.GetInteger("nllb_moe", "encoder_ffn_dim");
+    router_bias_                 = reader.GetBoolean("nllb_moe", "router_bias", false);
 
     MallocWeights();
     LoadModel(dir_path, layer_index);
@@ -28,6 +33,18 @@ NllbMoeEncoderLayerWeight<T>::~NllbMoeEncoderLayerWeight()
     deviceFree((T*&)self_attn.value_weight.bias);
     deviceFree((T*&)self_attn.attention_output_weight.kernel);
     deviceFree((T*&)self_attn.attention_output_weight.bias);
+    deviceFree((T*&)ff_layer_norm.gamma);
+    deviceFree((T*&)ff_layer_norm.beta);
+    if (is_sparse_) {
+        deviceFree((T*&)ffn.gating_weight.kernel);
+        if (router_bias_) {
+            deviceFree((T*&)ffn.gating_weight.bias);
+        }
+    }
+    deviceFree((T*&)ffn.intermediate_weight.kernel);
+    deviceFree((T*&)ffn.intermediate_weight.bias);
+    deviceFree((T*&)ffn.output_weight.kernel);
+    deviceFree((T*&)ffn.output_weight.bias);
 }
 
 template<typename T>
@@ -43,6 +60,24 @@ void NllbMoeEncoderLayerWeight<T>::MallocWeights()
     deviceMalloc((T**)&self_attn.value_weight.bias, d_model_, false);
     deviceMalloc((T**)&self_attn.attention_output_weight.kernel, d_model_ * d_model_, false);
     deviceMalloc((T**)&self_attn.attention_output_weight.bias, d_model_, false);
+    deviceMalloc((T**)&ff_layer_norm.gamma, d_model_, false);
+    deviceMalloc((T**)&ff_layer_norm.beta, d_model_, false);
+    if (is_sparse_) {
+        deviceMalloc((T**)&ffn.gating_weight.kernel, d_model_ * num_experts_, false);
+        if (router_bias_) {
+            deviceMalloc((T**)&ffn.gating_weight.bias, num_experts_, false);
+        }
+        deviceMalloc((T**)&ffn.intermediate_weight.kernel, num_experts_ * d_model_ * encoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.intermediate_weight.bias, num_experts_ * encoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.output_weight.kernel, num_experts_ * encoder_ffn_dim_ * d_model_, false);
+        deviceMalloc((T**)&ffn.output_weight.bias, num_experts_ * d_model_, false);
+    }
+    else {
+        deviceMalloc((T**)&ffn.intermediate_weight.kernel, d_model_ * encoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.intermediate_weight.bias, encoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.output_weight.kernel, encoder_ffn_dim_ * d_model_, false);
+        deviceMalloc((T**)&ffn.output_weight.bias, d_model_, false);
+    }
 }
 
 template<typename T>
@@ -80,6 +115,49 @@ void NllbMoeEncoderLayerWeight<T>::LoadModel(const std::string& dir_path, uint64
                          {d_model_},
                          file_path_prefix + ".self_attn.out_proj.bias",
                          model_file_type);
+    loadWeightFromBin<T>(
+        (T*)ff_layer_norm.gamma, {d_model_}, file_path_prefix + ".ff_layer_norm.weight", model_file_type);
+    loadWeightFromBin<T>((T*)ff_layer_norm.beta, {d_model_}, file_path_prefix + ".ff_layer_norm.bias", model_file_type);
+    if (is_sparse_) {
+        loadWeightFromBin<T>((T*)ffn.gating_weight.kernel,
+                             {d_model_, num_experts_},
+                             file_path_prefix + ".ffn.router.classifier.weight",
+                             model_file_type);
+        if (router_bias_) {
+            loadWeightFromBin<T>((T*)ffn.gating_weight.bias,
+                                 {num_experts_},
+                                 file_path_prefix + ".ffn.router.classifier.bias",
+                                 model_file_type);
+        }
+        loadWeightFromBin<T>((T*)ffn.intermediate_weight.kernel,
+                             {num_experts_ * d_model_, encoder_ffn_dim_},
+                             file_path_prefix + ".ffn.fc1.weight",
+                             model_file_type);
+        loadWeightFromBin<T>((T*)ffn.intermediate_weight.bias,
+                             {num_experts_, encoder_ffn_dim_},
+                             file_path_prefix + ".ffn.fc1.bias",
+                             model_file_type);
+        loadWeightFromBin<T>((T*)ffn.output_weight.kernel,
+                             {num_experts_ * encoder_ffn_dim_, d_model_},
+                             file_path_prefix + ".ffn.fc2.weight",
+                             model_file_type);
+        loadWeightFromBin<T>(
+            (T*)ffn.output_weight.bias, {num_experts_, d_model_}, file_path_prefix + ".ffn.fc2.bias", model_file_type);
+    }
+    else {
+        loadWeightFromBin<T>((T*)ffn.intermediate_weight.kernel,
+                             {d_model_, encoder_ffn_dim_},
+                             file_path_prefix + ".ffn.fc1.weight",
+                             model_file_type);
+        loadWeightFromBin<T>(
+            (T*)ffn.intermediate_weight.bias, {encoder_ffn_dim_}, file_path_prefix + ".ffn.fc1.bias", model_file_type);
+        loadWeightFromBin<T>((T*)ffn.output_weight.kernel,
+                             {encoder_ffn_dim_, d_model_},
+                             file_path_prefix + ".ffn.fc2.weight",
+                             model_file_type);
+        loadWeightFromBin<T>(
+            (T*)ffn.output_weight.bias, {d_model_}, file_path_prefix + ".ffn.fc2.bias", model_file_type);
+    }
 }
 
 template struct NllbMoeEncoderLayerWeight<float>;

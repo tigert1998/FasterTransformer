@@ -1,6 +1,7 @@
 import os
 import argparse
 import configparser
+import re
 
 import numpy as np
 import torch
@@ -91,13 +92,32 @@ def convert(saved_dir, in_file, weight_data_type):
     with open(saved_dir + "/config.ini", 'w') as configfile:
         config.write(configfile)
 
+    moe_params = {}
+
     np_weight_data_type = get_weight_data_type(args.weight_data_type)
     for name, param in model.named_parameters():
-        np_param: np.array = param.detach().cpu().numpy().astype(np_weight_data_type)
+        np_param: np.ndarray = param.detach().cpu().numpy().astype(np_weight_data_type)
         is_linear = isinstance(fetch_module_by_name(model, os.path.splitext(name)[0]), nn.Linear)
         if is_linear:
             np_param = np_param.T
-        np_param.tofile(os.path.join(saved_dir, name))
+        search_result = re.search(".experts.expert_(\d+).", name)
+        if search_result is None:
+            np_param.tofile(os.path.join(saved_dir, name))
+        else:
+            expert_idx = int(search_result.group(1))
+            new_name = re.sub(".experts.expert_\d+", '', name)
+            if moe_params.get(new_name, None) is None:
+                moe_params[new_name] = []
+            if expert_idx >= len(moe_params[new_name]):
+                moe_params[new_name] = moe_params[new_name] + [None] * (expert_idx + 1 - len(moe_params[new_name]))
+            moe_params[new_name][expert_idx] = np_param
+
+    for name, param_list in moe_params.items():
+        param = np.concatenate(
+            [np.expand_dims(param, 0) for param in param_list],
+            axis=0
+        )
+        param.tofile(os.path.join(saved_dir, name))
 
 
 if __name__ == "__main__":

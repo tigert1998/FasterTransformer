@@ -1,6 +1,7 @@
 #pragma once
 
 #include "src/fastertransformer/kernels/layernorm_kernels.h"
+#include "src/fastertransformer/layers/FfnWeight.h"
 #include "src/fastertransformer/layers/attention_layers/AttentionWeight.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_sinusoidal_positional_embedding_weight.h"
 
@@ -20,9 +21,19 @@ public:
 
     LayerNormWeight<T> self_attn_layer_norm;
     AttentionWeight<T> self_attn;
+    LayerNormWeight<T> ff_layer_norm;
+    FfnWeight<T>       ffn;
+
+    inline bool is_sparse()
+    {
+        return is_sparse_;
+    }
 
 private:
     uint64_t d_model_;
+    bool     is_sparse_;  // use MoE or not
+    uint64_t num_experts_, encoder_ffn_dim_;
+    bool     router_bias_;
 
     void MallocWeights();
     void LoadModel(const std::string& dir_path, uint64_t layer_index);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "src/fastertransformer/layers/FfnLayer.h"
 #include "src/fastertransformer/layers/attention_layers/UnfusedAttentionLayer.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder_weight.h"
 #include "src/fastertransformer/utils/Tensor.h"
@@ -33,15 +34,22 @@ private:
     cublasMMWrapper* cublas_wrapper_;
     IAllocator*      allocator_;
 
-    uint64_t d_model_, pad_token_id_, encoder_sparse_step_, encoder_layers_;
+    uint64_t d_model_, pad_token_id_, encoder_sparse_step_, encoder_layers_, num_experts_, encoder_ffn_dim_;
 
-    void* embedding_lookup_temp_storage_ = nullptr;
-    T*    hidden_states_                 = nullptr;
-    T*    self_attn_input_               = nullptr;
-    T*    attention_mask_                = nullptr;
-    T*    self_attn_output_              = nullptr;
+    void* embedding_lookup_temp_storage_            = nullptr;
+    T*    hidden_states_                            = nullptr;
+    T*    self_attn_input_                          = nullptr;
+    T*    attention_mask_                           = nullptr;
+    T*    self_attn_output_                         = nullptr;
+    T*    residual_                                 = nullptr;
+    T*    ffn_input_                                = nullptr;
+    T*    ffn_output_                               = nullptr;
+    T*    expert_scales_                            = nullptr;
+    T*    expanded_source_row_to_expanded_dest_row_ = nullptr;
+    T*    expert_for_source_row_                    = nullptr;
 
     std::unique_ptr<UnfusedAttentionLayer<T>> self_attn_;
+    std::unique_ptr<FfnLayer<T>>              ffn_;
 
     void
     AllocateBuffer(uint64_t batch_size, uint64_t max_input_ids_length, uint64_t embedding_lookup_temp_storage_size);

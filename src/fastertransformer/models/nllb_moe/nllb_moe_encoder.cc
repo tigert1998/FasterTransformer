@@ -1,5 +1,6 @@
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder.h"
 
+#include "src/fastertransformer/kernels/add_residual_kernels.h"
 #include "src/fastertransformer/kernels/bert_preprocess_kernels.h"
 #include "src/fastertransformer/kernels/layernorm_kernels.h"
 #include "src/fastertransformer/kernels/nllb_moe_kernels.h"
@@ -17,6 +18,8 @@ NllbMoeEncoder<T>::NllbMoeEncoder(const INIReader& reader,
     d_model_             = reader.GetInteger("nllb_moe", "d_model");
     encoder_sparse_step_ = reader.GetInteger("nllb_moe", "encoder_sparse_step");
     encoder_layers_      = reader.GetInteger("nllb_moe", "encoder_layers");
+    num_experts_         = reader.GetInteger("nllb_moe", "num_experts");
+    encoder_ffn_dim_     = reader.GetInteger("nllb_moe", "encoder_ffn_dim");
 
     stream_         = stream;
     cublas_wrapper_ = cublas_wrapper;
@@ -33,6 +36,18 @@ NllbMoeEncoder<T>::NllbMoeEncoder(const INIReader& reader,
                                                             cublas_wrapper_,
                                                             allocator_,
                                                             false);
+
+    FT_CHECK(reader.Get("nllb_moe", "activation_function") == "relu");
+    ffn_ = std::make_unique<ReluFfnLayer<T>>(0,
+                                             0,
+                                             encoder_attention_heads,
+                                             d_model_ / encoder_attention_heads,
+                                             num_experts_,
+                                             encoder_ffn_dim_,
+                                             stream_,
+                                             cublas_wrapper_,
+                                             allocator_,
+                                             false);
 }
 
 template<typename T>
@@ -117,10 +132,84 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
         };
         self_attn_->forward(
             &self_attn_output_tensors, &self_attn_input_tensors, &nllb_moe_encoder_weight->layers[i]->self_attn);
-        break;
+
+        invokeGeneralAddBiasResidualPreLayerNorm<T>(residual_,
+                                                    ffn_input_,
+                                                    self_attn_output_,
+                                                    hidden_states_,
+                                                    nllb_moe_encoder_weight->layers[i]->ff_layer_norm.gamma,
+                                                    nllb_moe_encoder_weight->layers[i]->ff_layer_norm.beta,
+                                                    nullptr,
+                                                    1e-5,
+                                                    batch_size * max_input_ids_length,
+                                                    d_model_,
+                                                    nullptr,
+                                                    nullptr,
+                                                    nullptr,
+                                                    nullptr,
+                                                    0,
+                                                    stream_);
+
+        if (nllb_moe_encoder_weight->layers[i]->is_sparse()) {
+            uint64_t  moe_k             = 2;
+            TensorMap ffn_input_tensors = {
+                {"ffn_input",
+                 {MEMORY_GPU, data_type, std::vector<size_t>{batch_size * max_input_ids_length, d_model_}, ffn_input_}},
+                {"moe_k", {MEMORY_CPU, TYPE_UINT64, std::vector<size_t>{1}, &moe_k}}};
+            TensorMap ffn_output_tensors = {
+                {"ffn_output",
+                 {MEMORY_GPU,
+                  data_type,
+                  std::vector<size_t>{moe_k * batch_size * max_input_ids_length, d_model_},
+                  ffn_output_}},
+                {"expert_scales",
+                 {MEMORY_GPU,
+                  data_type,
+                  std::vector<size_t>{batch_size * max_input_ids_length, moe_k},
+                  expert_scales_}},
+                {"expanded_source_row_to_expanded_dest_row",
+                 {MEMORY_GPU,
+                  TYPE_INT32,
+                  std::vector<size_t>{batch_size * max_input_ids_length, moe_k},
+                  expert_scales_}},
+                {"expert_for_source_row",
+                 {MEMORY_GPU,
+                  TYPE_INT32,
+                  std::vector<size_t>{batch_size * max_input_ids_length, moe_k},
+                  expert_scales_}},
+            };
+            ffn_->forward(&ffn_output_tensors, &ffn_input_tensors, &nllb_moe_encoder_weight->layers[i]->ffn);
+
+            // TODO
+        }
+        else {
+            TensorMap ffn_input_tensors = {
+                {"ffn_input",
+                 {MEMORY_GPU, data_type, std::vector<size_t>{batch_size * max_input_ids_length, d_model_}, ffn_input_}},
+            };
+            TensorMap ffn_output_tensors = {
+                {"ffn_output",
+                 {MEMORY_GPU,
+                  data_type,
+                  std::vector<size_t>{batch_size * max_input_ids_length, d_model_},
+                  ffn_output_}},
+            };
+            ffn_->forward(&ffn_output_tensors, &ffn_input_tensors, &nllb_moe_encoder_weight->layers[i]->ffn);
+
+            invokeAddBiasResidual<T>(hidden_states_,
+                                     ffn_output_,
+                                     residual_,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     batch_size * max_input_ids_length,
+                                     d_model_,
+                                     stream_);
+        }
     }
     cudaStreamSynchronize(stream_);
-    xiaohu_dbg::PrintGPUArray(self_attn_output_, batch_size * max_input_ids_length * d_model_);
+    xiaohu_dbg::PrintGPUArray(hidden_states_, batch_size * max_input_ids_length * d_model_);
 }
 
 template<typename T>
@@ -138,6 +227,15 @@ void NllbMoeEncoder<T>::AllocateBuffer(uint64_t batch_size,
         attention_mask_, batch_size * max_input_ids_length * max_input_ids_length * sizeof(T), false);
     self_attn_output_ =
         (T*)allocator_->reMalloc(self_attn_output_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    residual_  = (T*)allocator_->reMalloc(residual_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    ffn_input_ = (T*)allocator_->reMalloc(ffn_input_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    ffn_output_ =
+        (T*)allocator_->reMalloc(ffn_output_, 2 * batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    expert_scales_ = (T*)allocator_->reMalloc(expert_scales_, batch_size * max_input_ids_length * 2 * sizeof(T), false);
+    expanded_source_row_to_expanded_dest_row_ = (T*)allocator_->reMalloc(
+        expanded_source_row_to_expanded_dest_row_, batch_size * max_input_ids_length * 2 * sizeof(int), false);
+    expert_for_source_row_ =
+        (T*)allocator_->reMalloc(expert_for_source_row_, batch_size * max_input_ids_length * 2 * sizeof(int), false);
 }
 
 template<typename T>
@@ -148,6 +246,12 @@ void NllbMoeEncoder<T>::FreeBuffer()
     allocator_->free((void**)(&self_attn_input_));
     allocator_->free((void**)(&attention_mask_));
     allocator_->free((void**)(&self_attn_output_));
+    allocator_->free((void**)(&residual_));
+    allocator_->free((void**)(&ffn_input_));
+    allocator_->free((void**)(&ffn_output_));
+    allocator_->free((void**)(&expert_scales_));
+    allocator_->free((void**)(&expanded_source_row_to_expanded_dest_row_));
+    allocator_->free((void**)(&expert_for_source_row_));
 }
 
 template class NllbMoeEncoder<float>;
