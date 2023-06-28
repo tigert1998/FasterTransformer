@@ -20,6 +20,10 @@ NllbMoeEncoder<T>::NllbMoeEncoder(const INIReader& reader,
     encoder_layers_      = reader.GetInteger("nllb_moe", "encoder_layers");
     num_experts_         = reader.GetInteger("nllb_moe", "num_experts");
     encoder_ffn_dim_     = reader.GetInteger("nllb_moe", "encoder_ffn_dim");
+    moe_token_dropout_   = reader.GetFloat("nllb_moe", "moe_token_dropout");
+
+    float moe_eval_capacity_token_fraction = reader.GetFloat("nllb_moe", "moe_eval_capacity_token_fraction");
+    FT_CHECK(moe_eval_capacity_token_fraction >= 1 - 1e-5);
 
     stream_         = stream;
     cublas_wrapper_ = cublas_wrapper;
@@ -172,16 +176,29 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                  {MEMORY_GPU,
                   TYPE_INT32,
                   std::vector<size_t>{batch_size * max_input_ids_length, moe_k},
-                  expert_scales_}},
+                  expanded_source_row_to_expanded_dest_row_}},
                 {"expert_for_source_row",
                  {MEMORY_GPU,
                   TYPE_INT32,
                   std::vector<size_t>{batch_size * max_input_ids_length, moe_k},
-                  expert_scales_}},
+                  expert_for_source_row_}},
             };
             ffn_->forward(&ffn_output_tensors, &ffn_input_tensors, &nllb_moe_encoder_weight->layers[i]->ffn);
 
-            // TODO
+            NllbMoeNormalizeRouterProbabilities<T>(
+                expert_scales_, moe_token_dropout_, batch_size * max_input_ids_length, stream_);
+
+            finalize_moe_routing_kernelLauncher<T>(ffn_output_,
+                                                   hidden_states_,
+                                                   residual_,
+                                                   nllb_moe_encoder_weight->layers[i]->ffn.output_weight.bias,
+                                                   expert_scales_,
+                                                   expanded_source_row_to_expanded_dest_row_,
+                                                   expert_for_source_row_,
+                                                   batch_size * max_input_ids_length,
+                                                   d_model_,
+                                                   moe_k,
+                                                   stream_);
         }
         else {
             TensorMap ffn_input_tensors = {
@@ -209,8 +226,6 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                                      stream_);
         }
     }
-    cudaStreamSynchronize(stream_);
-    xiaohu_dbg::PrintGPUArray(hidden_states_, batch_size * max_input_ids_length * d_model_);
 }
 
 template<typename T>
@@ -233,10 +248,10 @@ void NllbMoeEncoder<T>::AllocateBuffer(uint64_t batch_size,
     ffn_output_ =
         (T*)allocator_->reMalloc(ffn_output_, 2 * batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
     expert_scales_ = (T*)allocator_->reMalloc(expert_scales_, batch_size * max_input_ids_length * 2 * sizeof(T), false);
-    expanded_source_row_to_expanded_dest_row_ = (T*)allocator_->reMalloc(
+    expanded_source_row_to_expanded_dest_row_ = (int*)allocator_->reMalloc(
         expanded_source_row_to_expanded_dest_row_, batch_size * max_input_ids_length * 2 * sizeof(int), false);
     expert_for_source_row_ =
-        (T*)allocator_->reMalloc(expert_for_source_row_, batch_size * max_input_ids_length * 2 * sizeof(int), false);
+        (int*)allocator_->reMalloc(expert_for_source_row_, batch_size * max_input_ids_length * 2 * sizeof(int), false);
 }
 
 template<typename T>

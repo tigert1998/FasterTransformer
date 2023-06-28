@@ -17,7 +17,7 @@ void PrintGPUArray(const T* arr, int num_elements)
     for (int i = 0; i < num_elements; i++) {
         std::cout << vec[i] << ", ";
     }
-    std::cout << "}" << std::flush;
+    std::cout << "}\n" << std::flush;
 }
 }  // namespace xiaohu_dbg
 

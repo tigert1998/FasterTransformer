@@ -152,4 +152,45 @@ template void NllbMoeEmbeddingLookup(const int*           input_ids,
                                      cudaStream_t         stream);
 #endif
 
+namespace {
+template<typename T>
+__global__ void NormalizeRouterProbabilities(T* expert_scales, T moe_token_dropout, uint64_t num_tokens)
+{
+    auto tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= num_tokens)
+        return;
+
+    T denom                    = expert_scales[tid * 2] + expert_scales[tid * 2 + 1];
+    expert_scales[tid * 2]     = expert_scales[tid * 2] * (T)(((T)1.0f - moe_token_dropout) / denom);
+    expert_scales[tid * 2 + 1] = expert_scales[tid * 2 + 1] * (T)(((T)1.0f - moe_token_dropout) / denom);
+}
+}  // namespace
+
+template<typename T>
+void NllbMoeNormalizeRouterProbabilities(T*           expert_scales,
+                                         float        moe_token_dropout,
+                                         uint64_t     num_tokens,
+                                         cudaStream_t stream)
+{
+    NormalizeRouterProbabilities<T>
+        <<<(num_tokens + 127) / 128, 128, 0, stream>>>(expert_scales, moe_token_dropout, num_tokens);
+}
+
+template void NllbMoeNormalizeRouterProbabilities(float*       expert_scales,
+                                                  float        moe_token_dropout,
+                                                  uint64_t     num_tokens,
+                                                  cudaStream_t stream);
+
+template void NllbMoeNormalizeRouterProbabilities(half*        expert_scales,
+                                                  float        moe_token_dropout,
+                                                  uint64_t     num_tokens,
+                                                  cudaStream_t stream);
+
+#ifdef ENABLE_BF16
+template void NllbMoeNormalizeRouterProbabilities(__nv_bfloat16* expert_scales,
+                                                  float          moe_token_dropout,
+                                                  uint64_t       num_tokens,
+                                                  cudaStream_t   stream);
+#endif
+
 }  // namespace fastertransformer

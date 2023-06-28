@@ -35,6 +35,7 @@ private:
     IAllocator*      allocator_;
 
     uint64_t d_model_, pad_token_id_, encoder_sparse_step_, encoder_layers_, num_experts_, encoder_ffn_dim_;
+    float    moe_token_dropout_;
 
     void* embedding_lookup_temp_storage_            = nullptr;
     T*    hidden_states_                            = nullptr;
@@ -45,8 +46,8 @@ private:
     T*    ffn_input_                                = nullptr;
     T*    ffn_output_                               = nullptr;
     T*    expert_scales_                            = nullptr;
-    T*    expanded_source_row_to_expanded_dest_row_ = nullptr;
-    T*    expert_for_source_row_                    = nullptr;
+    int*  expanded_source_row_to_expanded_dest_row_ = nullptr;
+    int*  expert_for_source_row_                    = nullptr;
 
     std::unique_ptr<UnfusedAttentionLayer<T>> self_attn_;
     std::unique_ptr<FfnLayer<T>>              ffn_;

@@ -16,6 +16,8 @@ NllbMoeEncoderLayerWeight<T>::NllbMoeEncoderLayerWeight(const std::string& dir_p
     encoder_ffn_dim_             = reader.GetInteger("nllb_moe", "encoder_ffn_dim");
     router_bias_                 = reader.GetBoolean("nllb_moe", "router_bias", false);
 
+    FT_CHECK(!router_bias_);
+
     MallocWeights();
     LoadModel(dir_path, layer_index);
 }

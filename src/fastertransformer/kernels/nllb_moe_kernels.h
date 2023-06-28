@@ -19,4 +19,10 @@ void NllbMoeEmbeddingLookup(const int*   input_ids,
                             void*        temp_storage,
                             cudaStream_t stream);
 
+template<typename T>
+void NllbMoeNormalizeRouterProbabilities(T*           expert_scales,
+                                         float        moe_token_dropout,
+                                         uint64_t     num_tokens,
+                                         cudaStream_t stream);
+
 }  // namespace fastertransformer
