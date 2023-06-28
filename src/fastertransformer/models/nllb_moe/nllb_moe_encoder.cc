@@ -67,6 +67,8 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
 {
     DataType data_type = getTensorType<T>();
 
+    T* last_hidden_state = output_tensors->at("last_hidden_state").getPtr<T>();
+
     uint64_t batch_size           = input_tensors->at("input_ids").shape[0];
     uint64_t max_input_ids_length = input_tensors->at("input_ids").shape[1];
     int*     input_ids            = input_tensors->at("input_ids").getPtr<int>();
@@ -226,6 +228,17 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                                      stream_);
         }
     }
+
+    invokeGeneralLayerNorm<T>(last_hidden_state,
+                              hidden_states_,
+                              nllb_moe_encoder_weight->layer_norm.gamma,
+                              nllb_moe_encoder_weight->layer_norm.beta,
+                              1e-5,
+                              batch_size * max_input_ids_length,
+                              d_model_,
+                              nullptr,
+                              0,
+                              stream_);
 }
 
 template<typename T>

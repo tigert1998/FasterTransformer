@@ -173,17 +173,40 @@ NllbMoeEncoderWeight<T>::NllbMoeEncoderWeight(const std::string& dir_path, T* sh
 {
     INIReader reader(dir_path + "/config.ini");
     encoder_layers_ = reader.GetInteger("nllb_moe", "encoder_layers");
+    d_model_        = reader.GetInteger("nllb_moe", "d_model");
 
     sinusoidal_positional_embedding = std::make_unique<NllbMoeSinusoidalPositionalEmbeddingWeight<T>>(reader);
     for (int i = 0; i < encoder_layers_; i++) {
         layers.emplace_back(std::move(std::make_unique<NllbMoeEncoderLayerWeight<T>>(dir_path, i)));
     }
+
+    MallocWeights();
+    LoadModel(dir_path);
 }
 
 template<typename T>
 NllbMoeEncoderWeight<T>::~NllbMoeEncoderWeight()
 {
     // We don't free shared pointer here since it is managed by NllbMoeWeight
+    deviceFree((T*&)layer_norm.gamma);
+    deviceFree((T*&)layer_norm.beta);
+}
+
+template<typename T>
+void NllbMoeEncoderWeight<T>::MallocWeights()
+{
+    deviceMalloc((T**)&layer_norm.gamma, d_model_, false);
+    deviceMalloc((T**)&layer_norm.beta, d_model_, false);
+}
+
+template<typename T>
+void NllbMoeEncoderWeight<T>::LoadModel(const std::string& dir_path)
+{
+    FtCudaDataType model_file_type = getModelFileType(dir_path + "/config.ini", "nllb_moe");
+
+    std::string file_path_prefix = dir_path + "/model.encoder";
+    loadWeightFromBin<T>((T*)layer_norm.gamma, {d_model_}, file_path_prefix + ".layer_norm.weight", model_file_type);
+    loadWeightFromBin<T>((T*)layer_norm.beta, {d_model_}, file_path_prefix + ".layer_norm.bias", model_file_type);
 }
 
 template struct NllbMoeEncoderWeight<float>;

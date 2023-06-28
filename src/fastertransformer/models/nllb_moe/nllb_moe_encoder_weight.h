@@ -52,9 +52,13 @@ public:
     std::unique_ptr<NllbMoeSinusoidalPositionalEmbeddingWeight<T>>
                                                                sinusoidal_positional_embedding;  // positional embedding
     std::vector<std::unique_ptr<NllbMoeEncoderLayerWeight<T>>> layers;
+    LayerNormWeight<T>                                         layer_norm;
 
 private:
-    uint64_t encoder_layers_;
+    uint64_t encoder_layers_, d_model_;
+
+    void MallocWeights();
+    void LoadModel(const std::string& dir_path);
 };
 
 }  // namespace fastertransformer
