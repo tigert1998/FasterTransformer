@@ -54,6 +54,7 @@ void NllbMoeEmbeddingLookup(const int*   input_ids,
                             uint64_t     max_input_ids_length,
                             uint64_t     d_model,
                             bool         scale_embedding,
+                            uint64_t     past_key_values_length,
                             uint64_t*    temp_storage_size,
                             void*        temp_storage,
                             cudaStream_t stream)
@@ -91,12 +92,13 @@ void NllbMoeEmbeddingLookup(const int*   input_ids,
                       mask_begin,
                       [pad_token_id] __device__(int input_id) { return (int)(input_id != pad_token_id); });
     PrefixSum<<<(batch_size + 7) / 8, 8, 0, stream>>>(mask_begin, prefix_sum_begin, batch_size, max_input_ids_length);
-    thrust::transform(
-        thrust::cuda::par.on(stream),
-        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum_begin, mask_begin)),
-        thrust::make_zip_iterator(thrust::make_tuple(prefix_sum_end, mask_end)),
-        position_ids_begin,
-        [pad_token_id] __device__(auto x) { return thrust::get<0>(x) * thrust::get<1>(x) + pad_token_id; });
+    thrust::transform(thrust::cuda::par.on(stream),
+                      thrust::make_zip_iterator(thrust::make_tuple(prefix_sum_begin, mask_begin)),
+                      thrust::make_zip_iterator(thrust::make_tuple(prefix_sum_end, mask_end)),
+                      position_ids_begin,
+                      [pad_token_id, past_key_values_length] __device__(auto x) {
+                          return (thrust::get<0>(x) + past_key_values_length) * thrust::get<1>(x) + pad_token_id;
+                      });
 
     EmbeddingLookup<T><<<batch_size * max_input_ids_length, d_model, 0, stream>>>(
         position_ids_begin, positional_embedding, embed_pos_begin, batch_size, max_input_ids_length, d_model);
@@ -120,6 +122,7 @@ template void NllbMoeEmbeddingLookup(const int*   input_ids,
                                      uint64_t     max_input_ids_length,
                                      uint64_t     d_model,
                                      bool         scale_embedding,
+                                     uint64_t     past_key_values_length,
                                      uint64_t*    temp_storage_size,
                                      void*        temp_storage,
                                      cudaStream_t stream);
@@ -133,6 +136,7 @@ template void NllbMoeEmbeddingLookup(const int*   input_ids,
                                      uint64_t     max_input_ids_length,
                                      uint64_t     d_model,
                                      bool         scale_embedding,
+                                     uint64_t     past_key_values_length,
                                      uint64_t*    temp_storage_size,
                                      void*        temp_storage,
                                      cudaStream_t stream);
@@ -147,6 +151,7 @@ template void NllbMoeEmbeddingLookup(const int*           input_ids,
                                      uint64_t             max_input_ids_length,
                                      uint64_t             d_model,
                                      bool                 scale_embedding,
+                                     uint64_t             past_key_values_length,
                                      uint64_t*            temp_storage_size,
                                      void*                temp_storage,
                                      cudaStream_t         stream);

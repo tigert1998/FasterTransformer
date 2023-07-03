@@ -84,6 +84,7 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                               max_input_ids_length,
                               d_model_,
                               true,
+                              0,
                               &embedding_lookup_temp_storage_size,
                               nullptr,
                               stream_);
@@ -98,6 +99,7 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                               max_input_ids_length,
                               d_model_,
                               true,
+                              0,
                               &embedding_lookup_temp_storage_size,
                               embedding_lookup_temp_storage_,
                               stream_);

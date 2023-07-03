@@ -15,6 +15,7 @@ void NllbMoeEmbeddingLookup(const int*   input_ids,
                             uint64_t     max_input_ids_length,
                             uint64_t     d_model,
                             bool         scale_embedding,
+                            uint64_t     past_key_values_length,
                             uint64_t*    temp_storage_size,
                             void*        temp_storage,
                             cudaStream_t stream);

@@ -17,6 +17,7 @@ NllbMoeWeight<T>::NllbMoeWeight(const std::string& dir_path)
     LoadModel(dir_path);
 
     encoder = std::make_unique<NllbMoeEncoderWeight<T>>(dir_path, shared);
+    decoder = std::make_unique<NllbMoeDecoderWeight<T>>(dir_path, shared);
 }
 
 template<typename T>

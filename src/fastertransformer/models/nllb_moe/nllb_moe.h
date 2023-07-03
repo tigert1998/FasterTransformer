@@ -1,6 +1,7 @@
 #pragma once
 
 #include "3rdparty/INIReader.h"
+#include "src/fastertransformer/models/nllb_moe/nllb_moe_decoder.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_weight.h"
 #include "src/fastertransformer/utils/Tensor.h"
@@ -30,6 +31,7 @@ private:
     uint64_t d_model_;
 
     std::unique_ptr<NllbMoeEncoder<T>> encoder_;
+    std::unique_ptr<NllbMoeDecoder<T>> decoder_;
 
     T* encoder_hidden_states_ = nullptr;
 

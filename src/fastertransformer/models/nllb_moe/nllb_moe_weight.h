@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "src/fastertransformer/models/nllb_moe/nllb_moe_decoder_weight.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_encoder_weight.h"
 
 #include <memory>
@@ -21,6 +22,7 @@ public:
 
     T*                                       shared  = nullptr;  // embedding table
     std::unique_ptr<NllbMoeEncoderWeight<T>> encoder = nullptr;  // encoder
+    std::unique_ptr<NllbMoeDecoderWeight<T>> decoder = nullptr;  // decoder
 
 private:
     uint64_t d_model_, vocab_size_;

@@ -21,7 +21,8 @@ NllbMoe<T>::NllbMoe(const INIReader& reader,
 
     d_model_ = reader.GetInteger("nllb_moe", "d_model");
 
-    encoder_ = std::make_unique<NllbMoeEncoder<T>>(reader, stream, cublas_wrapper, allocator);
+    encoder_ = std::make_unique<NllbMoeEncoder<T>>(reader, stream_, cublas_wrapper_, allocator_);
+    decoder_ = std::make_unique<NllbMoeDecoder<T>>(reader, stream_, cublas_wrapper_, allocator_);
 }
 
 template<typename T>
@@ -56,7 +57,21 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
         encoder_->Forward(&output_tensors_for_encoder, &input_tensors_for_encoder, nllb_moe_weight->encoder.get());
     }
 
-    xiaohu_dbg::PrintGPUArray(encoder_hidden_states_, batch_size * max_input_ids_length * d_model_);
+    {
+        std::vector<int> input_ids = {24937, 24937};
+        int*             d_input_ids;
+        deviceMalloc(&d_input_ids, input_ids.size(), false);
+        cudaH2Dcpy(d_input_ids, input_ids.data(), input_ids.size());
+
+        std::unordered_map<std::string, Tensor> input_tensors_for_decoder = {
+            {
+                "input_ids",
+                {MEMORY_GPU, TYPE_INT32, std::vector<size_t>{2, 1}, d_input_ids},
+            },
+        };
+
+        decoder_->Forward(nullptr, &input_tensors_for_decoder, nllb_moe_weight->decoder.get());
+    }
 }
 
 template<typename T>
