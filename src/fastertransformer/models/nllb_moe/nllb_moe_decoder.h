@@ -29,10 +29,11 @@ private:
     cublasMMWrapper* cublas_wrapper_;
     IAllocator*      allocator_;
 
-    uint64_t pad_token_id_, d_model_;
+    uint64_t pad_token_id_, d_model_, decoder_layers_;
 
     void* embedding_lookup_temp_storage_ = nullptr;
     T*    hidden_states_                 = nullptr;
+    T*    self_attn_input_               = nullptr;
 
     void
     AllocateBuffer(uint64_t batch_size, uint64_t max_input_ids_length, uint64_t embedding_lookup_temp_storage_size);

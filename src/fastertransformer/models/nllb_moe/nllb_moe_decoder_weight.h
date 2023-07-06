@@ -2,11 +2,38 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "src/fastertransformer/kernels/layernorm_kernels.h"
+#include "src/fastertransformer/layers/FfnWeight.h"
+#include "src/fastertransformer/layers/attention_layers/AttentionWeight.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_sinusoidal_positional_embedding_weight.h"
 #include "src/fastertransformer/utils/Tensor.h"
 
 namespace fastertransformer {
+
+template<typename T>
+struct NllbMoeDecoderLayerWeight {
+public:
+    inline NllbMoeDecoderLayerWeight() = default;
+    NllbMoeDecoderLayerWeight(const std::string& dir_path, uint64_t layer_index);
+    ~NllbMoeDecoderLayerWeight();
+
+    NllbMoeDecoderLayerWeight<T> operator=(const NllbMoeDecoderLayerWeight<T>&) = delete;
+
+    LayerNormWeight<T> self_attn_layer_norm;
+
+    inline bool is_sparse()
+    {
+        return is_sparse_;
+    }
+
+private:
+    uint64_t d_model_, is_sparse_;
+
+    void MallocWeights();
+    void LoadModel(const std::string& dir_path, uint64_t layer_index);
+};
 
 template<typename T>
 struct NllbMoeDecoderWeight {
@@ -19,7 +46,8 @@ public:
 
     T* shared = nullptr;
     std::unique_ptr<NllbMoeSinusoidalPositionalEmbeddingWeight<T>>
-        sinusoidal_positional_embedding;  // positional embedding
+                                                               sinusoidal_positional_embedding;  // positional embedding
+    std::vector<std::unique_ptr<NllbMoeDecoderLayerWeight<T>>> layers;
 
 private:
     uint64_t decoder_layers_, d_model_;
