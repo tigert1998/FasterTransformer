@@ -190,7 +190,7 @@ void NllbMoeEncoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
             ffn_->forward(&ffn_output_tensors, &ffn_input_tensors, &nllb_moe_encoder_weight->layers[i]->ffn);
 
             NllbMoeNormalizeRouterProbabilities<T>(
-                expert_scales_, moe_token_dropout_, batch_size * max_input_ids_length, stream_);
+                expert_scales_, input_ids_lengths, moe_token_dropout_, batch_size, max_input_ids_length, stream_);
 
             finalize_moe_routing_kernelLauncher<T>(ffn_output_,
                                                    hidden_states_,

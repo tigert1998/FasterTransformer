@@ -159,42 +159,58 @@ template void NllbMoeEmbeddingLookup(const int*           input_ids,
 
 namespace {
 template<typename T>
-__global__ void NormalizeRouterProbabilities(T* expert_scales, T moe_token_dropout, uint64_t num_tokens)
+__global__ void NormalizeRouterProbabilities(T*         expert_scales,
+                                             const int* input_ids_lengths,
+                                             T          moe_token_dropout,
+                                             uint64_t   batch_size,
+                                             uint64_t   max_input_ids_length)
 {
     auto tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= num_tokens)
+    if (tid >= batch_size * max_input_ids_length)
         return;
 
     T denom                    = expert_scales[tid * 2] + expert_scales[tid * 2 + 1];
     expert_scales[tid * 2]     = expert_scales[tid * 2] * (T)(((T)1.0f - moe_token_dropout) / denom);
     expert_scales[tid * 2 + 1] = expert_scales[tid * 2 + 1] * (T)(((T)1.0f - moe_token_dropout) / denom);
+    if (tid % max_input_ids_length >= input_ids_lengths[tid / max_input_ids_length]) {
+        expert_scales[tid * 2] = expert_scales[tid * 2 + 1] = (T)0.0f;
+    }
 }
 }  // namespace
 
 template<typename T>
 void NllbMoeNormalizeRouterProbabilities(T*           expert_scales,
+                                         const int*   input_ids_lengths,
                                          float        moe_token_dropout,
-                                         uint64_t     num_tokens,
+                                         uint64_t     batch_size,
+                                         uint64_t     max_input_ids_length,
                                          cudaStream_t stream)
 {
-    NormalizeRouterProbabilities<T>
-        <<<(num_tokens + 127) / 128, 128, 0, stream>>>(expert_scales, moe_token_dropout, num_tokens);
+    uint64_t num_tokens = batch_size * max_input_ids_length;
+    NormalizeRouterProbabilities<T><<<(num_tokens + 127) / 128, 128, 0, stream>>>(
+        expert_scales, input_ids_lengths, moe_token_dropout, batch_size, max_input_ids_length);
 }
 
 template void NllbMoeNormalizeRouterProbabilities(float*       expert_scales,
+                                                  const int*   input_ids_lengths,
                                                   float        moe_token_dropout,
-                                                  uint64_t     num_tokens,
+                                                  uint64_t     batch_size,
+                                                  uint64_t     max_input_ids_length,
                                                   cudaStream_t stream);
 
 template void NllbMoeNormalizeRouterProbabilities(half*        expert_scales,
+                                                  const int*   input_ids_lengths,
                                                   float        moe_token_dropout,
-                                                  uint64_t     num_tokens,
+                                                  uint64_t     batch_size,
+                                                  uint64_t     max_input_ids_length,
                                                   cudaStream_t stream);
 
 #ifdef ENABLE_BF16
 template void NllbMoeNormalizeRouterProbabilities(__nv_bfloat16* expert_scales,
+                                                  const int*     input_ids_lengths,
                                                   float          moe_token_dropout,
-                                                  uint64_t       num_tokens,
+                                                  uint64_t       batch_size,
+                                                  uint64_t       max_input_ids_length,
                                                   cudaStream_t   stream);
 #endif
 

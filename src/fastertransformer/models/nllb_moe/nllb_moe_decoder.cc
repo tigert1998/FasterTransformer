@@ -14,9 +14,20 @@ NllbMoeDecoder<T>::NllbMoeDecoder(const INIReader& reader,
     cublas_wrapper_ = cublas_wrapper;
     allocator_      = allocator;
 
-    pad_token_id_   = reader.GetInteger("nllb_moe", "pad_token_id");
-    d_model_        = reader.GetInteger("nllb_moe", "d_model");
-    decoder_layers_ = reader.GetInteger("nllb_moe", "decoder_layers");
+    pad_token_id_            = reader.GetInteger("nllb_moe", "pad_token_id");
+    d_model_                 = reader.GetInteger("nllb_moe", "d_model");
+    decoder_layers_          = reader.GetInteger("nllb_moe", "decoder_layers");
+    decoder_attention_heads_ = reader.GetInteger("nllb_moe", "decoder_attention_heads");
+
+    self_attn_ = std::make_unique<DecoderSelfAttentionLayer<T>>(0,
+                                                                decoder_attention_heads_,
+                                                                d_model_ / decoder_attention_heads_,
+                                                                stream_,
+                                                                cublas_wrapper_,
+                                                                allocator_,
+                                                                false,
+                                                                false,
+                                                                0);
 }
 
 template<typename T>
@@ -81,6 +92,8 @@ void NllbMoeDecoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                                   nullptr,
                                   0,
                                   stream_);
+
+        // self_attn_->forward();
         break;
     }
 
