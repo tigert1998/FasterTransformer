@@ -37,6 +37,9 @@ private:
     void* embedding_lookup_temp_storage_ = nullptr;
     T*    hidden_states_                 = nullptr;
     T*    self_attn_input_               = nullptr;
+    T*    self_attn_output_              = nullptr;
+    T*    residual_                      = nullptr;
+    T*    cross_attention_input_         = nullptr;
 
     std::unique_ptr<DecoderSelfAttentionLayer<T>> self_attn_;
 

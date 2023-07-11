@@ -22,6 +22,12 @@ NllbMoeDecoderLayerWeight<T>::~NllbMoeDecoderLayerWeight()
 {
     deviceFree((T*&)self_attn_layer_norm.gamma);
     deviceFree((T*&)self_attn_layer_norm.beta);
+    deviceFree((T*&)self_attn.query_weight.kernel);
+    deviceFree((T*&)self_attn.query_weight.bias);
+    deviceFree((T*&)self_attn.attention_output_weight.kernel);
+    deviceFree((T*&)self_attn.attention_output_weight.bias);
+    deviceFree((T*&)cross_attention_layer_norm.gamma);
+    deviceFree((T*&)cross_attention_layer_norm.beta);
 }
 
 template<typename T>
@@ -29,6 +35,12 @@ void NllbMoeDecoderLayerWeight<T>::MallocWeights()
 {
     deviceMalloc((T**)&self_attn_layer_norm.gamma, d_model_, false);
     deviceMalloc((T**)&self_attn_layer_norm.beta, d_model_, false);
+    deviceMalloc((T**)&self_attn.query_weight.kernel, d_model_ * 3 * d_model_, false);
+    deviceMalloc((T**)&self_attn.query_weight.bias, 3 * d_model_, false);
+    deviceMalloc((T**)&self_attn.attention_output_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&self_attn.attention_output_weight.bias, d_model_, false);
+    deviceMalloc((T**)&cross_attention_layer_norm.gamma, d_model_, false);
+    deviceMalloc((T**)&cross_attention_layer_norm.beta, d_model_, false);
 }
 
 template<typename T>
@@ -40,6 +52,28 @@ void NllbMoeDecoderLayerWeight<T>::LoadModel(const std::string& dir_path, uint64
         (T*)self_attn_layer_norm.gamma, {d_model_}, file_path_prefix + ".self_attn_layer_norm.weight", model_file_type);
     loadWeightFromBin<T>(
         (T*)self_attn_layer_norm.beta, {d_model_}, file_path_prefix + ".self_attn_layer_norm.bias", model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.query_weight.kernel,
+                         {d_model_, 3 * d_model_},
+                         file_path_prefix + ".self_attn.q_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>(
+        (T*)self_attn.query_weight.bias, {3 * d_model_}, file_path_prefix + ".self_attn.q_proj.bias", model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.attention_output_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".self_attn.out_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)self_attn.attention_output_weight.bias,
+                         {d_model_},
+                         file_path_prefix + ".self_attn.out_proj.bias",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention_layer_norm.gamma,
+                         {d_model_},
+                         file_path_prefix + ".cross_attention_layer_norm.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention_layer_norm.beta,
+                         {d_model_},
+                         file_path_prefix + ".cross_attention_layer_norm.bias",
+                         model_file_type);
 }
 
 template struct NllbMoeDecoderLayerWeight<float>;

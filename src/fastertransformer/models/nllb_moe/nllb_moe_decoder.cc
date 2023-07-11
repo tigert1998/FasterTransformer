@@ -41,12 +41,14 @@ void NllbMoeDecoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                                 const std::unordered_map<std::string, Tensor>* input_tensors,
                                 const NllbMoeDecoderWeight<T>*                 nllb_moe_decoder_weight)
 {
+    DataType data_type = getTensorType<T>();
+
     uint64_t batch_size           = input_tensors->at("input_ids").shape[0];
     uint64_t max_input_ids_length = input_tensors->at("input_ids").shape[1];
     int*     input_ids            = input_tensors->at("input_ids").getPtr<int>();
 
-    // TODO
-    uint64_t past_key_values_length = 2;
+    // FIXME
+    uint64_t past_key_values_length = input_tensors->at("step").getVal<int>() - 1;
 
     FT_CHECK(max_input_ids_length == 1);
 
@@ -92,12 +94,56 @@ void NllbMoeDecoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
                                   nullptr,
                                   0,
                                   stream_);
+        {
+            std::vector<size_t> self_attn_key_cache_shape = output_tensors->at("key_cache").shape;
+            self_attn_key_cache_shape.erase(self_attn_key_cache_shape.begin());
+            uint64_t self_attn_key_cache_size = std::accumulate(
+                self_attn_key_cache_shape.begin(), self_attn_key_cache_shape.end(), 1, std::multiplies<size_t>{});
+            T* self_attn_key_cache = output_tensors->at("key_cache").getPtr<T>() + i * self_attn_key_cache_size;
 
-        // self_attn_->forward();
+            std::vector<size_t> self_attn_value_cache_shape = output_tensors->at("value_cache").shape;
+            self_attn_value_cache_shape.erase(self_attn_value_cache_shape.begin());
+            uint64_t self_attn_value_cache_size = std::accumulate(
+                self_attn_value_cache_shape.begin(), self_attn_value_cache_shape.end(), 1, std::multiplies<size_t>{});
+            T* self_attn_value_cache = output_tensors->at("value_cache").getPtr<T>() + i * self_attn_value_cache_size;
+
+            TensorMap self_attn_input_tensors = {
+                {"input_query", {MEMORY_GPU, data_type, {batch_size, d_model_}, self_attn_input_}},
+                {"sequence_lengths", input_tensors->at("output_ids_lengths")},
+                {"step", input_tensors->at("step")},
+            };
+            TensorMap self_attn_output_tensors = {
+                {"hidden_features", {MEMORY_GPU, data_type, {batch_size, d_model_}, self_attn_output_}},
+                {"key_cache", {MEMORY_GPU, data_type, self_attn_key_cache_shape, self_attn_key_cache}},
+                {"value_cache", {MEMORY_GPU, data_type, self_attn_value_cache_shape, self_attn_value_cache}},
+            };
+            self_attn_->forward(
+                &self_attn_output_tensors, &self_attn_input_tensors, &nllb_moe_decoder_weight->layers[i]->self_attn);
+        }
+
+        invokeGeneralAddBiasResidualPreLayerNorm(
+            residual_,
+            cross_attention_input_,
+            self_attn_output_,
+            hidden_states_,
+            nllb_moe_decoder_weight->layers[i]->cross_attention_layer_norm.gamma,
+            nllb_moe_decoder_weight->layers[i]->cross_attention_layer_norm.beta,
+            nllb_moe_decoder_weight->layers[i]->self_attn.attention_output_weight.bias,
+            1e-5,
+            batch_size * max_input_ids_length,
+            d_model_,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            0,
+            stream_);
+
         break;
     }
 
-    xiaohu_dbg::PrintGPUArray(self_attn_input_, batch_size * max_input_ids_length * d_model_);
+    xiaohu_dbg::PrintGPUArray(residual_, batch_size * max_input_ids_length * d_model_);
+    xiaohu_dbg::PrintGPUArray(cross_attention_input_, batch_size * max_input_ids_length * d_model_);
 }
 
 template<typename T>
@@ -111,6 +157,11 @@ void NllbMoeDecoder<T>::AllocateBuffer(uint64_t batch_size,
         (T*)allocator_->reMalloc(hidden_states_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
     self_attn_input_ =
         (T*)allocator_->reMalloc(self_attn_input_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    self_attn_output_ =
+        (T*)allocator_->reMalloc(self_attn_output_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    residual_ = (T*)allocator_->reMalloc(residual_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    cross_attention_input_ = (T*)allocator_->reMalloc(
+        cross_attention_input_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
 }
 
 template<typename T>
@@ -119,6 +170,9 @@ void NllbMoeDecoder<T>::FreeBuffer()
     allocator_->free((void**)(&embedding_lookup_temp_storage_));
     allocator_->free((void**)(&hidden_states_));
     allocator_->free((void**)(&self_attn_input_));
+    allocator_->free((void**)(&self_attn_output_));
+    allocator_->free((void**)(&residual_));
+    allocator_->free((void**)(&cross_attention_input_));
 }
 
 template class NllbMoeDecoder<float>;

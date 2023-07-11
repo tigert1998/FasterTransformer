@@ -93,6 +93,7 @@ def convert(saved_dir, in_file, weight_data_type):
         config.write(configfile)
 
     moe_params = {}
+    decoder_self_attn_params = {}
 
     np_weight_data_type = get_weight_data_type(args.weight_data_type)
     for name, param in model.named_parameters():
@@ -100,22 +101,36 @@ def convert(saved_dir, in_file, weight_data_type):
         is_linear = isinstance(fetch_module_by_name(model, os.path.splitext(name)[0]), nn.Linear)
         if is_linear:
             np_param = np_param.T
-        search_result = re.search(".experts.expert_(\d+).", name)
-        if search_result is None:
+        expert_search_result = re.search("\.experts\.expert_(\d+).", name)
+        decoder_self_attn_search_result = re.search("decoder\.layers\.\d+\.self_attn\.(.)_proj", name)
+        if expert_search_result is None and decoder_self_attn_search_result is None:
             np_param.tofile(os.path.join(saved_dir, name))
-        else:
-            expert_idx = int(search_result.group(1))
-            new_name = re.sub(".experts.expert_\d+", '', name)
+        elif expert_search_result is not None:
+            expert_idx = int(expert_search_result.group(1))
+            new_name = re.sub("\.experts\.expert_\d+", '', name)
             if moe_params.get(new_name, None) is None:
                 moe_params[new_name] = []
             if expert_idx >= len(moe_params[new_name]):
                 moe_params[new_name] = moe_params[new_name] + [None] * (expert_idx + 1 - len(moe_params[new_name]))
             moe_params[new_name][expert_idx] = np_param
+        elif decoder_self_attn_search_result is not None:
+            new_name = re.sub("._proj", 'q_proj', name)
+            mat_type = decoder_self_attn_search_result.group(1)
+            if decoder_self_attn_params.get(new_name, None) is None:
+                decoder_self_attn_params[new_name] = {}
+            decoder_self_attn_params[new_name][mat_type] = np_param
 
     for name, param_list in moe_params.items():
         param = np.concatenate(
             [np.expand_dims(param, 0) for param in param_list],
             axis=0
+        )
+        param.tofile(os.path.join(saved_dir, name))
+
+    for name, param_dic in decoder_self_attn_params.items():
+        param = np.concatenate(
+            [param_dic['q'], param_dic['k'], param_dic['v']],
+            axis=-1
         )
         param.tofile(os.path.join(saved_dir, name))
 

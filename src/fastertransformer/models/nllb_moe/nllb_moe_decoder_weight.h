@@ -22,6 +22,8 @@ public:
     NllbMoeDecoderLayerWeight<T> operator=(const NllbMoeDecoderLayerWeight<T>&) = delete;
 
     LayerNormWeight<T> self_attn_layer_norm;
+    AttentionWeight<T> self_attn;
+    LayerNormWeight<T> cross_attention_layer_norm;
 
     inline bool is_sparse()
     {

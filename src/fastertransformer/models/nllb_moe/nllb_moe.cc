@@ -58,19 +58,60 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
     }
 
     {
-        std::vector<int> input_ids = {24937, 24937};
+        std::vector<int> input_ids = {2, 2};
         int*             d_input_ids;
         deviceMalloc(&d_input_ids, input_ids.size(), false);
         cudaH2Dcpy(d_input_ids, input_ids.data(), input_ids.size());
 
+        int32_t step = 1;
+
+        std::vector<int> output_ids_lengths = {0, 0};
+        int*             d_output_ids_lengths;
+        deviceMalloc(&d_output_ids_lengths, output_ids_lengths.size(), false);
+        cudaH2Dcpy(d_output_ids_lengths, output_ids_lengths.data(), output_ids_lengths.size());
+
+        uint64_t decoder_layers          = 4;
+        uint64_t max_output_ids_length   = 16;
+        uint64_t decoder_attention_heads = 4;
+
+        T* d_key_cache;
+        T* d_value_cache;
+        deviceMalloc(&d_key_cache, decoder_layers * batch_size * d_model_ * max_output_ids_length, false);
+        deviceMalloc(&d_value_cache, decoder_layers * batch_size * d_model_ * max_output_ids_length, false);
+
         std::unordered_map<std::string, Tensor> input_tensors_for_decoder = {
-            {
-                "input_ids",
-                {MEMORY_GPU, TYPE_INT32, std::vector<size_t>{2, 1}, d_input_ids},
-            },
+            {"input_ids", {MEMORY_GPU, TYPE_INT32, {2, 1}, d_input_ids}},
+            {"step", {MEMORY_CPU, TYPE_INT32, {1}, &step}},
+            {"output_ids_lengths", {MEMORY_GPU, TYPE_INT32, {2}, d_output_ids_lengths}},
         };
 
-        decoder_->Forward(nullptr, &input_tensors_for_decoder, nllb_moe_weight->decoder.get());
+        std::unordered_map<std::string, Tensor> output_tensors_for_decoder = {
+            {"key_cache",
+             {MEMORY_GPU,
+              data_type,
+              {
+                  decoder_layers,
+                  batch_size,
+                  decoder_attention_heads,
+                  d_model_ / decoder_attention_heads / (16 / sizeof(T)),
+                  max_output_ids_length,
+                  16 / sizeof(T),
+              },
+              d_key_cache}},
+            {"value_cache",
+             {MEMORY_GPU,
+              data_type,
+              {
+                  decoder_layers,
+                  batch_size,
+                  decoder_attention_heads,
+                  max_output_ids_length,
+                  d_model_ / decoder_attention_heads,
+              },
+              d_value_cache}},
+        };
+
+        decoder_->Forward(&output_tensors_for_decoder, &input_tensors_for_decoder, nllb_moe_weight->decoder.get());
     }
 }
 
