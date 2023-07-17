@@ -24,6 +24,8 @@ public:
     LayerNormWeight<T> self_attn_layer_norm;
     AttentionWeight<T> self_attn;
     LayerNormWeight<T> cross_attention_layer_norm;
+    AttentionWeight<T> cross_attention;
+    LayerNormWeight<T> ff_layer_norm;
 
     inline bool is_sparse()
     {

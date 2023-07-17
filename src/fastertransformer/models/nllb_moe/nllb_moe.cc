@@ -45,10 +45,7 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
     {
         std::unordered_map<std::string, Tensor> output_tensors_for_encoder = {
             {"last_hidden_state",
-             {MEMORY_GPU,
-              data_type,
-              std::vector<size_t>{batch_size, max_input_ids_length, d_model_},
-              encoder_hidden_states_}},
+             {MEMORY_GPU, data_type, {batch_size, max_input_ids_length, d_model_}, encoder_hidden_states_}},
         };
         std::unordered_map<std::string, Tensor> input_tensors_for_encoder = {
             {"input_ids", input_tensors->at("input_ids")},
@@ -76,13 +73,22 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
 
         T* d_key_cache;
         T* d_value_cache;
+        T* d_cross_attention_key_cache;
+        T* d_cross_attention_value_cache;
         deviceMalloc(&d_key_cache, decoder_layers * batch_size * d_model_ * max_output_ids_length, false);
         deviceMalloc(&d_value_cache, decoder_layers * batch_size * d_model_ * max_output_ids_length, false);
+        deviceMalloc(
+            &d_cross_attention_key_cache, decoder_layers * batch_size * d_model_ * max_input_ids_length, false);
+        deviceMalloc(
+            &d_cross_attention_value_cache, decoder_layers * batch_size * d_model_ * max_input_ids_length, false);
 
         std::unordered_map<std::string, Tensor> input_tensors_for_decoder = {
             {"input_ids", {MEMORY_GPU, TYPE_INT32, {2, 1}, d_input_ids}},
             {"step", {MEMORY_CPU, TYPE_INT32, {1}, &step}},
             {"output_ids_lengths", {MEMORY_GPU, TYPE_INT32, {2}, d_output_ids_lengths}},
+            {"encoder_hidden_states",
+             {MEMORY_GPU, data_type, {batch_size, max_input_ids_length, d_model_}, encoder_hidden_states_}},
+            {"encoder_input_ids_lengths", input_tensors->at("input_ids_lengths")},
         };
 
         std::unordered_map<std::string, Tensor> output_tensors_for_decoder = {
@@ -109,6 +115,29 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
                   d_model_ / decoder_attention_heads,
               },
               d_value_cache}},
+            {"cross_attention_key_cache",
+             {MEMORY_GPU,
+              data_type,
+              {
+                  decoder_layers,
+                  batch_size,
+                  decoder_attention_heads,
+                  d_model_ / decoder_attention_heads / (16 / sizeof(T)),
+                  max_input_ids_length,
+                  16 / sizeof(T),
+              },
+              d_cross_attention_key_cache}},
+            {"cross_attention_value_cache",
+             {MEMORY_GPU,
+              data_type,
+              {
+                  decoder_layers,
+                  batch_size,
+                  decoder_attention_heads,
+                  max_input_ids_length,
+                  d_model_ / decoder_attention_heads,
+              },
+              d_cross_attention_value_cache}},
         };
 
         decoder_->Forward(&output_tensors_for_decoder, &input_tensors_for_decoder, nllb_moe_weight->decoder.get());

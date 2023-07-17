@@ -28,6 +28,9 @@ NllbMoeDecoder<T>::NllbMoeDecoder(const INIReader& reader,
                                                                 false,
                                                                 false,
                                                                 0);
+
+    cross_attention_ = std::make_unique<DecoderCrossAttentionLayer<T>>(
+        0, decoder_attention_heads_, d_model_ / decoder_attention_heads_, stream_, cublas_wrapper_, allocator_, false);
 }
 
 template<typename T>
@@ -139,11 +142,65 @@ void NllbMoeDecoder<T>::Forward(std::unordered_map<std::string, Tensor>*       o
             0,
             stream_);
 
+        {
+            std::vector<size_t> cross_attention_key_cache_shape = output_tensors->at("cross_attention_key_cache").shape;
+            cross_attention_key_cache_shape.erase(cross_attention_key_cache_shape.begin());
+            uint64_t cross_attention_key_cache_size = std::accumulate(cross_attention_key_cache_shape.begin(),
+                                                                      cross_attention_key_cache_shape.end(),
+                                                                      1,
+                                                                      std::multiplies<size_t>{});
+            T*       cross_attention_key_cache =
+                output_tensors->at("cross_attention_key_cache").getPtr<T>() + i * cross_attention_key_cache_size;
+
+            std::vector<size_t> cross_attention_value_cache_shape =
+                output_tensors->at("cross_attention_value_cache").shape;
+            cross_attention_value_cache_shape.erase(cross_attention_value_cache_shape.begin());
+            uint64_t cross_attention_value_cache_size = std::accumulate(cross_attention_value_cache_shape.begin(),
+                                                                        cross_attention_value_cache_shape.end(),
+                                                                        1,
+                                                                        std::multiplies<size_t>{});
+            T*       cross_attention_value_cache =
+                output_tensors->at("cross_attention_value_cache").getPtr<T>() + i * cross_attention_value_cache_size;
+
+            TensorMap cross_attention_input_tensors = {
+                {"input_query", {MEMORY_GPU, data_type, {batch_size, d_model_}, cross_attention_input_}},
+                {"encoder_output", input_tensors->at("encoder_hidden_states")},
+                {"encoder_sequence_length", input_tensors->at("encoder_input_ids_lengths")},
+                {"step", input_tensors->at("step")},
+            };
+            TensorMap cross_attention_output_tensors = {
+                {"hidden_features", {MEMORY_GPU, data_type, {batch_size, d_model_}, cross_attention_output_}},
+                {"key_cache", {MEMORY_GPU, data_type, cross_attention_key_cache_shape, cross_attention_key_cache}},
+                {"value_cache",
+                 {MEMORY_GPU, data_type, cross_attention_value_cache_shape, cross_attention_value_cache}},
+            };
+            cross_attention_->forward(&cross_attention_output_tensors,
+                                      &cross_attention_input_tensors,
+                                      &nllb_moe_decoder_weight->layers[i]->cross_attention);
+        }
+
+        invokeGeneralAddBiasResidualPreLayerNorm(
+            hidden_states_,
+            ffn_input_,
+            cross_attention_output_,
+            residual_,
+            nllb_moe_decoder_weight->layers[i]->ff_layer_norm.gamma,
+            nllb_moe_decoder_weight->layers[i]->ff_layer_norm.beta,
+            nllb_moe_decoder_weight->layers[i]->cross_attention.attention_output_weight.bias,
+            1e-5,
+            batch_size * max_input_ids_length,
+            d_model_,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            0,
+            stream_);
+
         break;
     }
 
-    xiaohu_dbg::PrintGPUArray(residual_, batch_size * max_input_ids_length * d_model_);
-    xiaohu_dbg::PrintGPUArray(cross_attention_input_, batch_size * max_input_ids_length * d_model_);
+    xiaohu_dbg::PrintGPUArray(ffn_input_, batch_size * max_input_ids_length * d_model_);
 }
 
 template<typename T>
@@ -162,6 +219,9 @@ void NllbMoeDecoder<T>::AllocateBuffer(uint64_t batch_size,
     residual_ = (T*)allocator_->reMalloc(residual_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
     cross_attention_input_ = (T*)allocator_->reMalloc(
         cross_attention_input_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    cross_attention_output_ = (T*)allocator_->reMalloc(
+        cross_attention_output_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
+    ffn_input_ = (T*)allocator_->reMalloc(ffn_input_, batch_size * max_input_ids_length * d_model_ * sizeof(T), false);
 }
 
 template<typename T>
@@ -173,6 +233,8 @@ void NllbMoeDecoder<T>::FreeBuffer()
     allocator_->free((void**)(&self_attn_output_));
     allocator_->free((void**)(&residual_));
     allocator_->free((void**)(&cross_attention_input_));
+    allocator_->free((void**)(&cross_attention_output_));
+    allocator_->free((void**)(&ffn_input_));
 }
 
 template class NllbMoeDecoder<float>;

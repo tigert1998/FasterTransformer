@@ -28,6 +28,16 @@ NllbMoeDecoderLayerWeight<T>::~NllbMoeDecoderLayerWeight()
     deviceFree((T*&)self_attn.attention_output_weight.bias);
     deviceFree((T*&)cross_attention_layer_norm.gamma);
     deviceFree((T*&)cross_attention_layer_norm.beta);
+    deviceFree((T*&)cross_attention.query_weight.kernel);
+    deviceFree((T*&)cross_attention.query_weight.bias);
+    deviceFree((T*&)cross_attention.key_weight.kernel);
+    deviceFree((T*&)cross_attention.key_weight.bias);
+    deviceFree((T*&)cross_attention.value_weight.kernel);
+    deviceFree((T*&)cross_attention.value_weight.bias);
+    deviceFree((T*&)cross_attention.attention_output_weight.kernel);
+    deviceFree((T*&)cross_attention.attention_output_weight.bias);
+    deviceFree((T*&)ff_layer_norm.gamma);
+    deviceFree((T*&)ff_layer_norm.beta);
 }
 
 template<typename T>
@@ -41,6 +51,16 @@ void NllbMoeDecoderLayerWeight<T>::MallocWeights()
     deviceMalloc((T**)&self_attn.attention_output_weight.bias, d_model_, false);
     deviceMalloc((T**)&cross_attention_layer_norm.gamma, d_model_, false);
     deviceMalloc((T**)&cross_attention_layer_norm.beta, d_model_, false);
+    deviceMalloc((T**)&cross_attention.query_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&cross_attention.query_weight.bias, d_model_, false);
+    deviceMalloc((T**)&cross_attention.key_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&cross_attention.key_weight.bias, d_model_, false);
+    deviceMalloc((T**)&cross_attention.value_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&cross_attention.value_weight.bias, d_model_, false);
+    deviceMalloc((T**)&cross_attention.attention_output_weight.kernel, d_model_ * d_model_, false);
+    deviceMalloc((T**)&cross_attention.attention_output_weight.bias, d_model_, false);
+    deviceMalloc((T**)&ff_layer_norm.gamma, d_model_, false);
+    deviceMalloc((T**)&ff_layer_norm.beta, d_model_, false);
 }
 
 template<typename T>
@@ -74,6 +94,41 @@ void NllbMoeDecoderLayerWeight<T>::LoadModel(const std::string& dir_path, uint64
                          {d_model_},
                          file_path_prefix + ".cross_attention_layer_norm.bias",
                          model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.query_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".cross_attention.q_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.query_weight.bias,
+                         {d_model_},
+                         file_path_prefix + ".cross_attention.q_proj.bias",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.key_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".cross_attention.k_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.key_weight.bias,
+                         {d_model_},
+                         file_path_prefix + ".cross_attention.k_proj.bias",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.value_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".cross_attention.v_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.value_weight.bias,
+                         {d_model_},
+                         file_path_prefix + ".cross_attention.v_proj.bias",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.attention_output_weight.kernel,
+                         {d_model_, d_model_},
+                         file_path_prefix + ".cross_attention.out_proj.weight",
+                         model_file_type);
+    loadWeightFromBin<T>((T*)cross_attention.attention_output_weight.bias,
+                         {d_model_},
+                         file_path_prefix + ".cross_attention.out_proj.bias",
+                         model_file_type);
+    loadWeightFromBin<T>(
+        (T*)ff_layer_norm.gamma, {d_model_}, file_path_prefix + ".ff_layer_norm.weight", model_file_type);
+    loadWeightFromBin<T>((T*)ff_layer_norm.beta, {d_model_}, file_path_prefix + ".ff_layer_norm.bias", model_file_type);
 }
 
 template struct NllbMoeDecoderLayerWeight<float>;

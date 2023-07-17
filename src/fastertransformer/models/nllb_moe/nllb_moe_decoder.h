@@ -5,6 +5,7 @@
 #include "3rdparty/INIReader.h"
 
 #include "src/fastertransformer/layers/FfnLayer.h"
+#include "src/fastertransformer/layers/attention_layers/DecoderCrossAttentionLayer.h"
 #include "src/fastertransformer/layers/attention_layers/DecoderSelfAttentionLayer.h"
 #include "src/fastertransformer/layers/attention_layers/UnfusedAttentionLayer.h"
 #include "src/fastertransformer/models/nllb_moe/nllb_moe_decoder_weight.h"
@@ -40,8 +41,11 @@ private:
     T*    self_attn_output_              = nullptr;
     T*    residual_                      = nullptr;
     T*    cross_attention_input_         = nullptr;
+    T*    cross_attention_output_        = nullptr;
+    T*    ffn_input_                     = nullptr;
 
-    std::unique_ptr<DecoderSelfAttentionLayer<T>> self_attn_;
+    std::unique_ptr<DecoderSelfAttentionLayer<T>>  self_attn_;
+    std::unique_ptr<DecoderCrossAttentionLayer<T>> cross_attention_;
 
     void
     AllocateBuffer(uint64_t batch_size, uint64_t max_input_ids_length, uint64_t embedding_lookup_temp_storage_size);
