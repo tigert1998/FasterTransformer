@@ -26,6 +26,7 @@ public:
     LayerNormWeight<T> cross_attention_layer_norm;
     AttentionWeight<T> cross_attention;
     LayerNormWeight<T> ff_layer_norm;
+    FfnWeight<T>       ffn;
 
     inline bool is_sparse()
     {
@@ -33,7 +34,7 @@ public:
     }
 
 private:
-    uint64_t d_model_, is_sparse_;
+    uint64_t d_model_, is_sparse_, router_bias_, decoder_ffn_dim_, num_experts_;
 
     void MallocWeights();
     void LoadModel(const std::string& dir_path, uint64_t layer_index);
@@ -52,6 +53,7 @@ public:
     std::unique_ptr<NllbMoeSinusoidalPositionalEmbeddingWeight<T>>
                                                                sinusoidal_positional_embedding;  // positional embedding
     std::vector<std::unique_ptr<NllbMoeDecoderLayerWeight<T>>> layers;
+    LayerNormWeight<T>                                         layer_norm;
 
 private:
     uint64_t decoder_layers_, d_model_;

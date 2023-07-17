@@ -12,6 +12,11 @@ NllbMoeDecoderLayerWeight<T>::NllbMoeDecoderLayerWeight(const std::string& dir_p
     d_model_                     = reader.GetInteger("nllb_moe", "d_model");
     uint64_t decoder_sparse_step = reader.GetInteger("nllb_moe", "decoder_sparse_step");
     is_sparse_                   = decoder_sparse_step > 0 ? (layer_index + 1) % decoder_sparse_step == 0 : false;
+    num_experts_                 = reader.GetInteger("nllb_moe", "num_experts");
+    decoder_ffn_dim_             = reader.GetInteger("nllb_moe", "decoder_ffn_dim");
+    router_bias_                 = reader.GetBoolean("nllb_moe", "router_bias", false);
+
+    FT_CHECK(!router_bias_);
 
     MallocWeights();
     LoadModel(dir_path, layer_index);
@@ -38,6 +43,16 @@ NllbMoeDecoderLayerWeight<T>::~NllbMoeDecoderLayerWeight()
     deviceFree((T*&)cross_attention.attention_output_weight.bias);
     deviceFree((T*&)ff_layer_norm.gamma);
     deviceFree((T*&)ff_layer_norm.beta);
+    if (is_sparse_) {
+        deviceFree((T*&)ffn.gating_weight.kernel);
+        if (router_bias_) {
+            deviceFree((T*&)ffn.gating_weight.bias);
+        }
+    }
+    deviceFree((T*&)ffn.intermediate_weight.kernel);
+    deviceFree((T*&)ffn.intermediate_weight.bias);
+    deviceFree((T*&)ffn.output_weight.kernel);
+    deviceFree((T*&)ffn.output_weight.bias);
 }
 
 template<typename T>
@@ -61,6 +76,22 @@ void NllbMoeDecoderLayerWeight<T>::MallocWeights()
     deviceMalloc((T**)&cross_attention.attention_output_weight.bias, d_model_, false);
     deviceMalloc((T**)&ff_layer_norm.gamma, d_model_, false);
     deviceMalloc((T**)&ff_layer_norm.beta, d_model_, false);
+    if (is_sparse_) {
+        deviceMalloc((T**)&ffn.gating_weight.kernel, d_model_ * num_experts_, false);
+        if (router_bias_) {
+            deviceMalloc((T**)&ffn.gating_weight.bias, num_experts_, false);
+        }
+        deviceMalloc((T**)&ffn.intermediate_weight.kernel, num_experts_ * d_model_ * decoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.intermediate_weight.bias, num_experts_ * decoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.output_weight.kernel, num_experts_ * decoder_ffn_dim_ * d_model_, false);
+        deviceMalloc((T**)&ffn.output_weight.bias, num_experts_ * d_model_, false);
+    }
+    else {
+        deviceMalloc((T**)&ffn.intermediate_weight.kernel, d_model_ * decoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.intermediate_weight.bias, decoder_ffn_dim_, false);
+        deviceMalloc((T**)&ffn.output_weight.kernel, decoder_ffn_dim_ * d_model_, false);
+        deviceMalloc((T**)&ffn.output_weight.bias, d_model_, false);
+    }
 }
 
 template<typename T>
@@ -129,6 +160,46 @@ void NllbMoeDecoderLayerWeight<T>::LoadModel(const std::string& dir_path, uint64
     loadWeightFromBin<T>(
         (T*)ff_layer_norm.gamma, {d_model_}, file_path_prefix + ".ff_layer_norm.weight", model_file_type);
     loadWeightFromBin<T>((T*)ff_layer_norm.beta, {d_model_}, file_path_prefix + ".ff_layer_norm.bias", model_file_type);
+    if (is_sparse_) {
+        loadWeightFromBin<T>((T*)ffn.gating_weight.kernel,
+                             {d_model_, num_experts_},
+                             file_path_prefix + ".ffn.router.classifier.weight",
+                             model_file_type);
+        if (router_bias_) {
+            loadWeightFromBin<T>((T*)ffn.gating_weight.bias,
+                                 {num_experts_},
+                                 file_path_prefix + ".ffn.router.classifier.bias",
+                                 model_file_type);
+        }
+        loadWeightFromBin<T>((T*)ffn.intermediate_weight.kernel,
+                             {num_experts_ * d_model_, decoder_ffn_dim_},
+                             file_path_prefix + ".ffn.fc1.weight",
+                             model_file_type);
+        loadWeightFromBin<T>((T*)ffn.intermediate_weight.bias,
+                             {num_experts_, decoder_ffn_dim_},
+                             file_path_prefix + ".ffn.fc1.bias",
+                             model_file_type);
+        loadWeightFromBin<T>((T*)ffn.output_weight.kernel,
+                             {num_experts_ * decoder_ffn_dim_, d_model_},
+                             file_path_prefix + ".ffn.fc2.weight",
+                             model_file_type);
+        loadWeightFromBin<T>(
+            (T*)ffn.output_weight.bias, {num_experts_, d_model_}, file_path_prefix + ".ffn.fc2.bias", model_file_type);
+    }
+    else {
+        loadWeightFromBin<T>((T*)ffn.intermediate_weight.kernel,
+                             {d_model_, decoder_ffn_dim_},
+                             file_path_prefix + ".ffn.fc1.weight",
+                             model_file_type);
+        loadWeightFromBin<T>(
+            (T*)ffn.intermediate_weight.bias, {decoder_ffn_dim_}, file_path_prefix + ".ffn.fc1.bias", model_file_type);
+        loadWeightFromBin<T>((T*)ffn.output_weight.kernel,
+                             {decoder_ffn_dim_, d_model_},
+                             file_path_prefix + ".ffn.fc2.weight",
+                             model_file_type);
+        loadWeightFromBin<T>(
+            (T*)ffn.output_weight.bias, {d_model_}, file_path_prefix + ".ffn.fc2.bias", model_file_type);
+    }
 }
 
 template struct NllbMoeDecoderLayerWeight<float>;
@@ -156,16 +227,25 @@ NllbMoeDecoderWeight<T>::NllbMoeDecoderWeight(const std::string& dir_path, T* sh
 template<typename T>
 void NllbMoeDecoderWeight<T>::MallocWeights()
 {
+    deviceMalloc((T**)&layer_norm.gamma, d_model_, false);
+    deviceMalloc((T**)&layer_norm.beta, d_model_, false);
 }
 
 template<typename T>
 void NllbMoeDecoderWeight<T>::LoadModel(const std::string& dir_path)
 {
+    FtCudaDataType model_file_type = getModelFileType(dir_path + "/config.ini", "nllb_moe");
+
+    std::string file_path_prefix = dir_path + "/model.decoder";
+    loadWeightFromBin<T>((T*)layer_norm.gamma, {d_model_}, file_path_prefix + ".layer_norm.weight", model_file_type);
+    loadWeightFromBin<T>((T*)layer_norm.beta, {d_model_}, file_path_prefix + ".layer_norm.bias", model_file_type);
 }
 
 template<typename T>
 NllbMoeDecoderWeight<T>::~NllbMoeDecoderWeight()
 {
+    deviceFree((T*&)layer_norm.gamma);
+    deviceFree((T*&)layer_norm.beta);
 }
 
 template struct NllbMoeDecoderWeight<float>;

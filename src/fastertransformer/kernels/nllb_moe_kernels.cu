@@ -172,7 +172,7 @@ __global__ void NormalizeRouterProbabilities(T*         expert_scales,
     T denom                    = expert_scales[tid * 2] + expert_scales[tid * 2 + 1];
     expert_scales[tid * 2]     = expert_scales[tid * 2] * (T)(((T)1.0f - moe_token_dropout) / denom);
     expert_scales[tid * 2 + 1] = expert_scales[tid * 2 + 1] * (T)(((T)1.0f - moe_token_dropout) / denom);
-    if (tid % max_input_ids_length >= input_ids_lengths[tid / max_input_ids_length]) {
+    if (input_ids_lengths != nullptr && tid % max_input_ids_length >= input_ids_lengths[tid / max_input_ids_length]) {
         expert_scales[tid * 2] = expert_scales[tid * 2 + 1] = (T)0.0f;
     }
 }

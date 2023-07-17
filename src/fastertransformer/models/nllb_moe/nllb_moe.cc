@@ -71,10 +71,12 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
         uint64_t max_output_ids_length   = 16;
         uint64_t decoder_attention_heads = 4;
 
+        T* last_hidden_state;
         T* d_key_cache;
         T* d_value_cache;
         T* d_cross_attention_key_cache;
         T* d_cross_attention_value_cache;
+        deviceMalloc(&last_hidden_state, batch_size * d_model_, false);
         deviceMalloc(&d_key_cache, decoder_layers * batch_size * d_model_ * max_output_ids_length, false);
         deviceMalloc(&d_value_cache, decoder_layers * batch_size * d_model_ * max_output_ids_length, false);
         deviceMalloc(
@@ -92,6 +94,7 @@ void NllbMoe<T>::Forward(std::unordered_map<std::string, Tensor>*       output_t
         };
 
         std::unordered_map<std::string, Tensor> output_tensors_for_decoder = {
+            {"last_hidden_state", {MEMORY_GPU, data_type, {batch_size, 1, d_model_}, last_hidden_state}},
             {"key_cache",
              {MEMORY_GPU,
               data_type,
